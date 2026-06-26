@@ -1,6 +1,8 @@
 <?php
 
-define('BASE_PATH', dirname(__DIR__) . DIRECTORY_SEPARATOR);
+define('BASE_PATH', dirname(__DIR__) . '/');
 
-// Your project folder name in localhost
-define('BASE_URL', '/universel-Trading/');
+define('BASE_URL', '/Universel-Trading/');
+
+define('APP_NAME', 'Universal Trading');
+define('APP_ENV', 'production');
