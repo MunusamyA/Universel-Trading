@@ -12,7 +12,7 @@ $(document).ready(function () {
 
     $('#addRoleBtn').on('click', function () {
         resetRoleForm();
-        $('#roleModalTitle').text(window.USER_TYPE === 'platform_owner' ? 'Add Package Role' : 'Add Role');
+        $('#roleModalTitle').text((window.USER_TYPE || '') === 'platform_owner' ? 'Add Package Role' : 'Add Role');
         loadPermissionMenus(0);
         roleModal.show();
     });
@@ -24,12 +24,12 @@ $(document).ready(function () {
         $('#status').val($('#statusSwitch').is(':checked') ? '1' : '2');
 
         if (roleName === '') {
-            showToast('warning', 'Please enter role name.', 5000);
+            safeShowToast('warning', 'Please enter role name.', 5000);
             $('#role_name').focus();
             return;
         }
 
-        setButtonLoading('saveRoleBtn', 'Saving...');
+        safeSetButtonLoading('saveRoleBtn', 'Saving...');
 
         $.ajax({
             url: window.BASE_URL + 'api/roles.php',
@@ -38,19 +38,19 @@ $(document).ready(function () {
             data: $('#roleForm').serialize() + '&action=save_role',
             success: function (response) {
                 if (response.status === true) {
-                    showToast('success', response.message || 'Role saved successfully.', 4000);
+                    safeShowToast('success', response.message || 'Role saved successfully.', 4000);
                     roleModal.hide();
                     loadRoles();
                     loadMenuCount();
                 } else {
-                    handleApiError(response);
+                    safeHandleApiError(response);
                 }
-                resetButtonLoading('saveRoleBtn');
+                safeResetButtonLoading('saveRoleBtn');
             },
             error: function (xhr) {
                 console.log(xhr.responseText);
-                showToast('error', 'Server error. Please try again.', 5000);
-                resetButtonLoading('saveRoleBtn');
+                safeShowToast('error', 'Server error. Please try again.', 5000);
+                safeResetButtonLoading('saveRoleBtn');
             }
         });
     });
@@ -76,12 +76,12 @@ $(document).ready(function () {
                     loadPermissionMenus(role.id);
                     roleModal.show();
                 } else {
-                    handleApiError(response);
+                    safeHandleApiError(response);
                 }
             },
             error: function (xhr) {
                 console.log(xhr.responseText);
-                showToast('error', 'Server error. Please try again.', 5000);
+                safeShowToast('error', 'Server error. Please try again.', 5000);
             }
         });
     });
@@ -94,19 +94,19 @@ $(document).ready(function () {
             url: window.BASE_URL + 'api/roles.php',
             type: 'POST',
             dataType: 'json',
-            data: { action: 'delete_role', role_id: roleId, csrf_token: $('#csrf_token').val() },
+            data: { action: 'delete_role', role_id: roleId, csrf_token: getCsrfToken() },
             success: function (response) {
                 if (response.status === true) {
-                    showToast('success', response.message || 'Role deleted successfully.', 4000);
+                    safeShowToast('success', response.message || 'Role deleted successfully.', 4000);
                     loadRoles();
                     loadMenuCount();
                 } else {
-                    handleApiError(response);
+                    safeHandleApiError(response);
                 }
             },
             error: function (xhr) {
                 console.log(xhr.responseText);
-                showToast('error', 'Server error. Please try again.', 5000);
+                safeShowToast('error', 'Server error. Please try again.', 5000);
             }
         });
     });
@@ -295,6 +295,50 @@ $(document).ready(function () {
         $('#statusSwitch').prop('checked', true);
         $('#permissionTableBody').html('');
         $('#checkAllPermissions').text('Check All');
+    }
+
+
+    function getCsrfToken() {
+        let tokenInput = $('input[name="csrf_token"]').first();
+        if (tokenInput.length === 0) {
+            tokenInput = $('#roleForm input[type="hidden"]').filter(function () {
+                return this.name.toLowerCase().indexOf('csrf') !== -1;
+            }).first();
+        }
+        return tokenInput.val() || '';
+    }
+
+    function safeShowToast(type, message, duration) {
+        if (typeof showToast === 'function') {
+            showToast(type, message, duration || 5000);
+        } else {
+            alert(message);
+        }
+    }
+
+    function safeSetButtonLoading(buttonId, text) {
+        if (typeof setButtonLoading === 'function') {
+            setButtonLoading(buttonId, text);
+        } else {
+            $('#' + buttonId).prop('disabled', true).data('old-text', $('#' + buttonId).html()).html(text);
+        }
+    }
+
+    function safeResetButtonLoading(buttonId) {
+        if (typeof resetButtonLoading === 'function') {
+            resetButtonLoading(buttonId);
+        } else {
+            let btn = $('#' + buttonId);
+            btn.prop('disabled', false).html(btn.data('old-text') || 'Save Role');
+        }
+    }
+
+    function safeHandleApiError(response) {
+        if (typeof handleApiError === 'function') {
+            safeHandleApiError(response);
+        } else {
+            safeShowToast('error', response && response.message ? response.message : 'Something went wrong.', 5000);
+        }
     }
 
     function escapeHtml(text) { return $('<div>').text(text).html(); }

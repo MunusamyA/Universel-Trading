@@ -284,7 +284,11 @@ $page_title = "Roles & Permissions | Universal ERP";
 <?php include BASE_PATH . 'includes/rightbar.php'; ?>
 <?php include BASE_PATH . 'includes/scripts.php'; ?>
 
-<script src="<?= BASE_URL; ?>pages-js/roles.js"></script>
+<script>
+    window.BASE_URL = "<?= BASE_URL; ?>";
+    window.USER_TYPE = "<?= escapeHtml($_SESSION['user_type'] ?? 'business_user'); ?>";
+</script>
+<script src="<?= BASE_URL; ?>pages-js/roles.js?v=<?= time(); ?>"></script>
 
 </body>
 </html>

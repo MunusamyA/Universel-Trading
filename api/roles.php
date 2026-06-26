@@ -407,12 +407,6 @@ function createRole(PDO $pdo, $businessId, $branchId, $roleName, $description, $
         return (int)$pdo->lastInsertId();
     }
 
-    $parentRoleId = getCurrentPackageRoleId($pdo);
-
-    if ($parentRoleId <= 0) {
-        throw new Exception('Package role not found for current user.');
-    }
-
     $duplicateStmt = $pdo->prepare("
         SELECT id
         FROM roles
@@ -436,12 +430,11 @@ function createRole(PDO $pdo, $businessId, $branchId, $roleName, $description, $
         INSERT INTO roles
         (business_id, branch_id, role_type, parent_role_id, role_name, description, status, is_locked)
         VALUES
-        (:business_id, :branch_id, 2, :parent_role_id, :role_name, :description, :status, 0)
+        (:business_id, :branch_id, 2, NULL, :role_name, :description, :status, 0)
     ");
     $stmt->execute([
         ':business_id' => $businessId,
         ':branch_id' => $branchId,
-        ':parent_role_id' => $parentRoleId,
         ':role_name' => $roleName,
         ':description' => $description,
         ':status' => $status
@@ -736,7 +729,10 @@ function getEffectivePackageRoleId(PDO $pdo)
         Priority:
         1. Current logged-in role parent_role_id.
         2. Locked Branch Admin role for current business + current branch.
-        3. Any active branch role for current business + current branch with parent_role_id.
+
+        Note:
+        Branch Admin-created staff roles must keep parent_role_id NULL.
+        Package is always resolved from locked Branch Admin role.
     */
 
     $currentRoleId = currentRoleId();
@@ -792,30 +788,6 @@ function getEffectivePackageRoleId(PDO $pdo)
             return $parentRoleId;
         }
 
-        $stmt = $pdo->prepare("
-            SELECT parent_role_id
-            FROM roles
-            WHERE business_id = :business_id
-            AND branch_id = :branch_id
-            AND role_type = 2
-            AND parent_role_id IS NOT NULL
-            AND parent_role_id > 0
-            AND status = 1
-            ORDER BY id ASC
-            LIMIT 1
-        ");
-
-        $stmt->execute([
-            ':business_id' => $businessId,
-            ':branch_id' => $branchId
-        ]);
-
-        $role = $stmt->fetch(PDO::FETCH_ASSOC);
-        $parentRoleId = (int)($role['parent_role_id'] ?? 0);
-
-        if ($parentRoleId > 0) {
-            return $parentRoleId;
-        }
     }
 
     return 0;
