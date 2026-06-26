@@ -1,223 +1,211 @@
+<?php
+require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth.php';
+
+/** @var PDO $pdo */
+
+$currentPage = basename($_SERVER['PHP_SELF']);
+$user = currentLiveUser();
+
+function sidebarUrl($url)
+{
+    if ($url === '' || $url === '#' || $url === null) {
+        return 'javascript: void(0);';
+    }
+
+    $url = ltrim($url, '/');
+
+    if ($url === 'dashboard.php' || $url === 'index.php' || $url === 'login.php') {
+        return BASE_URL . $url;
+    }
+
+    if (strpos($url, 'pages/') === 0) {
+        return BASE_URL . $url;
+    }
+
+    return BASE_URL . 'pages/' . $url;
+}
+
+function isActiveMenu($url, $currentPage)
+{
+    if (!$url || $url === '#') {
+        return false;
+    }
+
+    return basename($url) === $currentPage;
+}
+
+$menus = [];
+
+try {
+    if ($user && (int)$user['user_status'] === 1) {
+
+        $userType = $user['user_type'] ?? 'business_user';
+        $roleId = (int)($user['role_id'] ?? 0);
+
+        if ($userType === 'platform_owner') {
+
+            $stmt = $pdo->prepare("
+                SELECT
+                    id AS menu_id,
+                    parent_id,
+                    menu_key,
+                    menu_name,
+                    menu_url,
+                    icon_class,
+                    sort_order
+                FROM sidebar_menus
+                WHERE is_sidebar = 1
+                AND status = 1
+                ORDER BY COALESCE(parent_id, 0), sort_order ASC, id ASC
+            ");
+
+            $stmt->execute();
+            $menus = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        } else {
+
+            if (
+                $roleId > 0 &&
+                (int)($user['business_status'] ?? 0) === 1 &&
+                (int)($user['approval_status'] ?? 0) === 1 &&
+                (int)($user['branch_status'] ?? 0) === 1 &&
+                (int)($user['role_status'] ?? 0) === 1
+            ) {
+
+                $stmt = $pdo->prepare("
+                    SELECT DISTINCT
+                        sm.id AS menu_id,
+                        sm.parent_id,
+                        sm.menu_key,
+                        sm.menu_name,
+                        sm.menu_url,
+                        sm.icon_class,
+                        sm.sort_order
+                    FROM sidebar_menus sm
+                    INNER JOIN roles r
+                        ON r.id = :role_id
+                        AND r.status = 1
+                    LEFT JOIN role_menu_permissions rmp_direct
+                        ON rmp_direct.menu_id = sm.id
+                        AND rmp_direct.role_id = r.id
+                        AND rmp_direct.can_view = 1
+                        AND rmp_direct.status = 1
+                    LEFT JOIN role_menu_permissions rmp_package
+                        ON rmp_package.menu_id = sm.id
+                        AND rmp_package.role_id = r.parent_role_id
+                        AND rmp_package.can_view = 1
+                        AND rmp_package.status = 1
+                    WHERE sm.status = 1
+                    AND sm.is_sidebar = 1
+                    AND (
+                        rmp_direct.id IS NOT NULL
+                        OR rmp_package.id IS NOT NULL
+                        OR sm.id IN (
+                            SELECT child_sm.parent_id
+                            FROM sidebar_menus child_sm
+                            LEFT JOIN role_menu_permissions child_direct
+                                ON child_direct.menu_id = child_sm.id
+                                AND child_direct.role_id = r.id
+                                AND child_direct.can_view = 1
+                                AND child_direct.status = 1
+                            LEFT JOIN role_menu_permissions child_package
+                                ON child_package.menu_id = child_sm.id
+                                AND child_package.role_id = r.parent_role_id
+                                AND child_package.can_view = 1
+                                AND child_package.status = 1
+                            WHERE child_sm.parent_id IS NOT NULL
+                            AND child_sm.status = 1
+                            AND child_sm.is_sidebar = 1
+                            AND (
+                                child_direct.id IS NOT NULL
+                                OR child_package.id IS NOT NULL
+                            )
+                        )
+                    )
+                    ORDER BY COALESCE(sm.parent_id, 0), sm.sort_order ASC, sm.id ASC
+                ");
+
+                $stmt->execute([':role_id' => $roleId]);
+                $menus = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            }
+        }
+    }
+} catch (Exception $e) {
+    $menus = [];
+}
+
+$parentMenus = [];
+$childMenus = [];
+
+foreach ($menus as $menu) {
+    if (empty($menu['parent_id'])) {
+        $parentMenus[] = $menu;
+    } else {
+        $childMenus[(int)$menu['parent_id']][] = $menu;
+    }
+}
+?>
+
 <div id="sidebar-menu">
-                <!-- Left Menu Start -->
-                <ul class="metismenu list-unstyled" id="side-menu">
-                    <li class="menu-title">Main</li>
+    <ul class="metismenu list-unstyled" id="side-menu">
 
-                    <li>
-                        <a href="index.html" class="waves-effect">
-                            <i class="dripicons-device-desktop"></i>
-                            <span>Dashboard</span>
-                        </a>
-                    </li>
+        <?php if (empty($parentMenus)) { ?>
+            <li>
+                <a href="<?= BASE_URL; ?>dashboard.php" class="waves-effect">
+                    <i class="dripicons-device-desktop"></i>
+                    <span>Dashboard</span>
+                </a>
+            </li>
+        <?php } else { ?>
+            <?php foreach ($parentMenus as $parent) { ?>
+                <?php
+                $parentId = (int)$parent['menu_id'];
+                $hasChild = isset($childMenus[$parentId]) && !empty($childMenus[$parentId]);
+                $parentUrl = sidebarUrl($parent['menu_url']);
+                $parentIcon = !empty($parent['icon_class']) ? $parent['icon_class'] : 'dripicons-chevron-right';
+                $parentName = $parent['menu_name'];
+                $parentActive = isActiveMenu($parent['menu_url'], $currentPage);
+                $childActive = false;
 
-                    <li>
-                        <a href="javascript: void(0);" class="has-arrow waves-effect">
-                            <i class="dripicons-suitcase"></i>
-                            <span> User Interface </span>
-                        </a>
-                        <ul class="sub-menu" aria-expanded="false">
-                            <li><a href="ui-buttons.html">Buttons</a></li>
-                            <li><a href="ui-cards.html">Cards</a></li>
-                            <li><a href="ui-tabs-accordions.html">Tabs &amp; Accordions</a></li>
-                            <li><a href="ui-modals.html">Modals</a></li>
-                            <li><a href="ui-images.html">Images</a></li>
-                            <li><a href="ui-alerts.html">Alerts</a></li>
-                            <li><a href="ui-progressbars.html">Progress Bars</a></li>
-                            <li><a href="ui-dropdowns.html">Dropdowns</a></li>
-                            <li><a href="ui-lightbox.html">Lightbox</a></li>
-                            <li><a href="ui-navs.html">Navs</a></li>
-                            <li><a href="ui-pagination.html">Pagination</a></li>
-                            <li><a href="ui-popover-tooltips.html">Popover &amp; Tooltips</a></li>
-                            <li><a href="ui-badge.html">Badge</a></li>
-                            <li><a href="ui-carousel.html">Carousel</a></li>
-                            <li><a href="ui-video.html">Video</a></li>
-                            <li><a href="ui-typography.html">Typography</a></li>
-                            <li><a href="ui-sweet-alert.html">Sweetalert</a></li>
-                            <li><a href="ui-grid.html">Grid</a></li>
+                if ($hasChild) {
+                    foreach ($childMenus[$parentId] as $childCheck) {
+                        if (isActiveMenu($childCheck['menu_url'], $currentPage)) {
+                            $childActive = true;
+                            break;
+                        }
+                    }
+                }
+
+                $liClass = ($parentActive || $childActive) ? 'mm-active' : '';
+                $aClass = $hasChild ? 'has-arrow waves-effect' : 'waves-effect';
+                ?>
+
+                <li class="<?= $liClass; ?>">
+                    <a href="<?= $hasChild ? 'javascript: void(0);' : htmlspecialchars($parentUrl); ?>" class="<?= $aClass; ?>">
+                        <i class="<?= htmlspecialchars($parentIcon); ?>"></i>
+                        <span><?= htmlspecialchars($parentName); ?></span>
+                    </a>
+
+                    <?php if ($hasChild) { ?>
+                        <ul class="sub-menu" aria-expanded="<?= $childActive ? 'true' : 'false'; ?>">
+                            <?php foreach ($childMenus[$parentId] as $child) { ?>
+                                <?php
+                                $childUrl = sidebarUrl($child['menu_url']);
+                                $childName = $child['menu_name'];
+                                $activeClass = isActiveMenu($child['menu_url'], $currentPage) ? 'active' : '';
+                                ?>
+                                <li>
+                                    <a href="<?= htmlspecialchars($childUrl); ?>" class="<?= $activeClass; ?>">
+                                        <?= htmlspecialchars($childName); ?>
+                                    </a>
+                                </li>
+                            <?php } ?>
                         </ul>
-                    </li>
-
-                    <li>
-                        <a href="javascript: void(0);" class="has-arrow waves-effect">
-                            <i class="dripicons-mail"></i>
-                            <span> Email </span>
-                        </a>
-                        <ul class="sub-menu" aria-expanded="false">
-                            <li><a href="email-inbox.html">Inbox</a></li>
-                            <li><a href="email-read.html">Email Read</a></li>
-                            <li><a href="email-compose.html">Email Compose</a></li>
-                        </ul>
-                    </li>
-
-                    <li>
-                        <a href="calendar.html" class=" waves-effect">
-                            <i class="dripicons-calendar"></i>
-                            <span>Calendar</span>
-                        </a>
-                    </li>
-
-                    <li>
-                        <a href="javascript: void(0);" class="has-arrow waves-effect">
-                            <i class="dripicons-card"></i>
-                            <span> Contact</span>
-                        </a>
-                        <ul class="sub-menu" aria-expanded="false">
-                            <li><a href="contacts-grid.html">Contact Grid</a></li>
-                            <li><a href="contacts-list.html">Contact List</a></li>
-                            <li><a href="contacts-profile.html">Profile</a></li>
-                        </ul>
-                    </li>
-
-                    <li>
-                        <a href="javascript: void(0);" class="waves-effect">
-                            <i class="dripicons-blog"></i><span class="badge rounded-pill bg-success float-end">7</span>
-                            <span> Forms </span>
-                        </a>
-                        <ul class="sub-menu" aria-expanded="false">
-                            <li><a href="form-elements.html">Form Elements</a></li>
-                            <li><a href="form-validation.html">Form Validation</a></li>
-                            <li><a href="form-advanced.html">Form Advanced</a></li>
-                            <li><a href="form-editors.html">Form Editor</a></li>
-                            <li><a href="form-uploads.html">Form File Upload</a></li>
-                            <li><a href="form-mask.html">Form Mask</a></li>
-                            <li><a href="form-xeditable.html">Form Xeditable</a></li>
-                        </ul>
-                    </li>
-
-                    <li>
-                        <a href="javascript: void(0);" class="has-arrow waves-effect">
-                            <i class="dripicons-box"></i>
-                            <span> Icons </span>
-                        </a>
-                        <ul class="sub-menu" aria-expanded="false">
-                            <li><a href="icons-material.html">Material Design</a></li>
-                            <li><a href="icons-ion.html">Ion Icons</a></li>
-                            <li><a href="icons-fontawesome.html">Font Awesome</a></li>
-                            <li><a href="icons-themify.html">Themify Icons</a></li>
-                            <li><a href="icons-dripicons.html">Dripicons</a></li>
-                            <li><a href="icons-typicons.html">Typicons Icons</a></li>
-                        </ul>
-                    </li>
-
-                    <li>
-                        <a href="javascript: void(0);" class="has-arrow waves-effect">
-                            <i class="dripicons-graph-line"></i>
-                            <span> Charts </span>
-                        </a>
-                        <ul class="sub-menu" aria-expanded="false">
-                            <li><a href="charts-morris.html">Morris Charts</a></li>
-                            <li><a href="charts-chartist.html">Chartist Charts</a></li>
-                            <li><a href="charts-chartjs.html">Chartjs Charts</a></li>
-                            <li><a href="charts-flot.html">Flot Charts</a></li>
-                            <li><a href="charts-c3.html">C3 Charts</a></li>
-                            <li><a href="charts-other.html">Jquery Knob Charts</a></li>
-                        </ul>
-                    </li>
-
-                    <li>
-                        <a href="javascript: void(0);" class="has-arrow waves-effect">
-                            <i class="dripicons-list"></i>
-                            <span> Tables </span>
-                        </a>
-                        <ul class="sub-menu" aria-expanded="false">
-                            <li><a href="tables-basic.html">Basic Tables</a></li>
-                            <li><a href="tables-datatable.html">Data Tables</a></li>
-                            <li><a href="tables-responsive.html">Responsive Table</a></li>
-                            <li><a href="tables-editable.html">Editable Table</a></li>
-                        </ul>
-                    </li>
-
-                    <li>
-                        <a href="javascript: void(0);" class="waves-effect">
-                            <i class="dripicons-map"></i><span class="badge rounded-pill bg-danger float-end">2</span>
-                            <span> Maps </span>
-                        </a>
-                        <ul class="sub-menu" aria-expanded="false">
-                            <li><a href="maps-google.html"> Google Maps</a></li>
-                            <li><a href="maps-vector.html"> Vector Maps</a></li>
-                        </ul>
-                    </li>
-
-                    <li class="menu-title">Extras</li>
-
-                    <li>
-                        <a href="javascript: void(0);" class="has-arrow waves-effect">
-                            <i class="dripicons-inbox"></i>
-                            <span> Layouts </span>
-                        </a>
-                        <ul class="sub-menu" aria-expanded="false">
-                            <li>
-                                <a href="javascript: void(0);" class="has-arrow waves-effect">
-                                    <span>Vertical</span>
-                                </a>
-                                <ul>
-                                    <li><a href="layout-light-sidebar.html">Light Sidebar</a></li>
-                                    <li><a href="layout-collapsed-sidebar.html">Collapsed Sidebar</a></li>
-                                </ul>
-                            </li>
-                            <li>
-                                <a href="javascript: void(0);" class="has-arrow waves-effect">
-                                    <span>Horizontal</span>
-                                </a>
-                                <ul>
-                                    <li><a href="layouts-horizontal.html">Horizontal</a></li>
-                                    <li><a href="layouts-hori-boxed-width.html">Boxed Width</a></li>
-                                </ul>
-                            </li>
-
-                        </ul>
-                    </li>
-
-                    <li>
-                        <a href="javascript: void(0);" class="has-arrow waves-effect">
-                            <i class="dripicons-heart"></i>
-                            <span> Advanced UI </span>
-                        </a>
-                        <ul class="sub-menu" aria-expanded="false">
-                            <li><a href="advanced-animation.html">Animation</a></li>
-                            <li><a href="advanced-highlight.html">Highlight</a></li>
-                            <li><a href="advanced-rating.html">Ratings</a></li>
-                            <li><a href="advanced-nestable.html">Nestable</a></li>
-                            <li><a href="advanced-alertify.html">Alertify</a></li>
-                            <li><a href="advanced-rangeslider.html">Range Slider</a></li>
-                            <li><a href="advanced-sessiontimeout.html">Session Timeout</a></li>
-                        </ul>
-                    </li>
-
-                    <li>
-                        <a href="javascript: void(0);" class="has-arrow waves-effect">
-                            <i class="dripicons-copy"></i>
-                            <span> Pages </span>
-                        </a>
-                        <ul class="sub-menu" aria-expanded="false">
-                            <li><a href="pages-timeline.html">Timeline</a></li>
-                            <li><a href="pages-invoice.html">Invoice</a></li>
-                            <li><a href="pages-directory.html">Directory</a></li>
-                            <li><a href="pages-login.html">Login</a></li>
-                            <li><a href="pages-register.html">Register</a></li>
-                            <li><a href="pages-recoverpw.html">Recover Password</a></li>
-                            <li><a href="pages-lock-screen.html">Lock Screen</a></li>
-                            <li><a href="pages-starter.html">Starter Page</a></li>
-                            <li><a href="pages-404.html">Error 404</a></li>
-                            <li><a href="pages-500.html">Error 500</a></li>
-                        </ul>
-                    </li>
-
-                    <li>
-                        <a href="javascript: void(0);" class="has-arrow waves-effect">
-                            <i class="dripicons-network-1"></i>
-                            <span>Multi Level</span>
-                        </a>
-                        <ul class="sub-menu" aria-expanded="true">
-                            <li><a href="javascript: void(0);">Level 1.1</a></li>
-                            <li><a href="javascript: void(0);" class="has-arrow">Level 1.2</a>
-                                <ul class="sub-menu" aria-expanded="true">
-                                    <li><a href="javascript: void(0);">Level 2.1</a></li>
-                                    <li><a href="javascript: void(0);">Level 2.2</a></li>
-                                </ul>
-                            </li>
-                        </ul>
-                    </li>
-
-                </ul>
-            </div>
+                    <?php } ?>
+                </li>
+            <?php } ?>
+        <?php } ?>
+    </ul>
+</div>

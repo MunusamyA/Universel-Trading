@@ -1,0 +1,101 @@
+$(document).ready(function () {
+    $('#preloader').fadeOut('slow');
+    let modal = new bootstrap.Modal(document.getElementById('recordModal'));
+    let timer = null;
+
+    loadRecords();
+    
+
+    $('#addBtn').on('click', function() {
+        resetForm();
+        $('#modalTitle').text('Add');
+        
+        modal.show();
+    });
+
+    $('#refreshBtn, #statusFilter').on('click change', loadRecords);
+    $('#searchInput').on('keyup', function() { clearTimeout(timer); timer = setTimeout(loadRecords, 400); });
+
+    $('#recordForm').on('submit', function(e) {
+        e.preventDefault();
+        if ($.trim($('#hsn_code').val()) === '') { showMsg('Please enter HSN code.'); return; }
+        $('#saveBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Saving...');
+        $.ajax({
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
+            type: 'POST',
+            dataType: 'json',
+            data: $('#recordForm').serialize() + '&action=save',
+            success: function(response) {
+                if (response.status === true) {
+                    showToastSafe('success', response.message || 'Saved.');
+                    modal.hide();
+                    loadRecords();
+                } else {
+                    handleError(response);
+                }
+                $('#saveBtn').prop('disabled', false).html('Save');
+            },
+            error: function(xhr) { console.log(xhr.responseText); showToastSafe('error', 'Server error.'); $('#saveBtn').prop('disabled', false).html('Save'); }
+        });
+    });
+
+    $(document).on('click', '.edit-btn', function() {
+        $.getJSON(window.BASE_URL + 'api/' + window.MASTER_FILE + '.php', {action:'get', id:$(this).data('id')}, function(response) {
+            if (response.status === true) {
+                let row = response.data.record;
+                resetForm();
+                $('#modalTitle').text('Edit');
+                $('#id').val(row.id);
+                $('#hsn_code').val(row.hsn_code); $('#hsn_description').val(row.hsn_description); $('#cgst_percentage').val(row.cgst_percentage); $('#sgst_percentage').val(row.sgst_percentage); $('#igst_percentage').val(row.igst_percentage);
+                $('#status').val(row.status);
+                
+                modal.show();
+            } else handleError(response);
+        });
+    });
+
+    $(document).on('click', '.delete-btn', function() {
+        if (!confirm('Are you sure?')) return;
+        $.ajax({
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
+            type: 'POST',
+            dataType: 'json',
+            data: { action:'delete', id:$(this).data('id'), csrf_token:$('input[name="csrf_token"]').first().val() },
+            success: function(response) { if (response.status === true) { showToastSafe('success', response.message); loadRecords(); } else handleError(response); },
+            error: function(xhr) { console.log(xhr.responseText); showToastSafe('error', 'Server error.'); }
+        });
+    });
+
+    function loadRecords() {
+        $('#tableBody').html('<tr><td colspan="8" class="text-center text-muted">Loading...</td></tr>');
+        $.getJSON(window.BASE_URL + 'api/' + window.MASTER_FILE + '.php', {action:'list', search:$('#searchInput').val(), status:$('#statusFilter').val()}, function(response) {
+            if (response.status === true) {
+                renderRows(response.data.records || []);
+                renderStats(response.data.stats || {});
+            } else $('#tableBody').html(`<tr><td colspan="8" class="text-center text-danger">${escapeHtml(response.message)}</td></tr>`);
+        });
+    }
+
+    function renderRows(rows) {
+        if (!rows.length) { $('#tableBody').html('<tr><td colspan="8" class="text-center text-muted">No records found.</td></tr>'); return; }
+        let html = '';
+        $.each(rows, function(i, row) {
+            html += `<tr><td>${i+1}</td><td>${escapeHtml(row.hsn_code || '')}</td><td>${escapeHtml(row.hsn_description || '')}</td><td>${percent(row.cgst_percentage)}</td><td>${percent(row.sgst_percentage)}</td><td>${percent(row.igst_percentage)}</td><td>${statusBadge(row.status)}</td><td><div class="btn-group btn-group-sm"><button class="btn btn-outline-primary edit-btn" data-id="${row.id}"><i class="mdi mdi-pencil"></i></button><button class="btn btn-outline-danger delete-btn" data-id="${row.id}"><i class="mdi mdi-delete"></i></button></div></td></tr>`;
+        });
+        $('#tableBody').html(html);
+    }
+
+    function renderStats(stats) {
+        $('#totalCount').text(stats.total || 0);
+        $('#activeCount').text(stats.active || 0);
+        $('#inactiveCount').text(stats.inactive || 0);
+    }
+
+    function resetForm() { $('#recordForm')[0].reset(); $('#id').val(''); $('#status').val('1'); }
+    function statusBadge(s) { return parseInt(s) === 1 ? '<span class="badge bg-success">Active</span>' : '<span class="badge bg-danger">Inactive</span>'; }
+    function percent(v) { return parseFloat(v || 0).toFixed(2) + '%'; }
+    function escapeHtml(v) { return $('<div>').text(v === null || v === undefined ? '' : v).html(); }
+    function showToastSafe(type, msg) { if (typeof showToast === 'function') showToast(type, msg, 5000); else alert(msg); }
+    function handleError(response) { if (response && response.redirect) window.location.href = response.redirect; else showToastSafe('error', response.message || 'Something went wrong.'); }
+
+});
