@@ -334,11 +334,12 @@ $(document).ready(function () {
     }
 
     function safeHandleApiError(response) {
-        if (typeof handleApiError === 'function') {
-            safeHandleApiError(response);
-        } else {
-            safeShowToast('error', response && response.message ? response.message : 'Something went wrong.', 5000);
+        if (typeof window.handleApiError === 'function' && window.handleApiError !== safeHandleApiError) {
+            window.handleApiError(response);
+            return;
         }
+
+        safeShowToast('error', response && response.message ? response.message : 'Something went wrong.', 5000);
     }
 
     function escapeHtml(text) { return $('<div>').text(text).html(); }

@@ -703,7 +703,8 @@ function validatePermissionsWithinCurrentUserAccess(PDO $pdo, $menuIds, $permiss
 
             if ($requested === 1) {
                 if (!isset($allowed[$menuId]) || (int)$allowed[$menuId][$field] !== 1) {
-                    jsonResponse(false, 'You cannot give permission higher than this branch package access.');
+                    $menuName = getMenuNameById($pdo, $menuId);
+                    jsonResponse(false, 'Package access not allowed for ' . $menuName . ' - ' . $field . '. Enable this permission in the package role first.');
                 }
             }
         }
@@ -797,6 +798,17 @@ function getCurrentPackageRoleId(PDO $pdo)
 {
     return getEffectivePackageRoleId($pdo);
 }
+
+
+function getMenuNameById(PDO $pdo, $menuId)
+{
+    $stmt = $pdo->prepare("SELECT menu_name FROM sidebar_menus WHERE id = :menu_id LIMIT 1");
+    $stmt->execute([':menu_id' => (int)$menuId]);
+    $name = $stmt->fetchColumn();
+
+    return $name ? $name : ('Menu #' . (int)$menuId);
+}
+
 
 function getRoleRow(PDO $pdo, $roleId)
 {
