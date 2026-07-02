@@ -136,6 +136,10 @@ $(document).ready(function () {
         let html = `<div class="btn-group btn-group-sm">
             <a class="btn btn-outline-primary" href="${window.BASE_URL}pages/sales.php?id=${id}&mode=edit" title="Edit / View"><i class="mdi mdi-pencil"></i></a>`;
 
+        if (parseFloat(row.due_amount || 0) > 0) {
+            html += `<a class="btn btn-outline-success" href="${window.BASE_URL}pages/customer-payments.php?sales_id=${id}" title="Receive Payment"><i class="mdi mdi-cash-plus"></i></a>`;
+        }
+
         if (docPermission(docType, 'print')) {
             html += `<a class="btn btn-outline-secondary" target="_blank" href="${window.BASE_URL}pages/sales-print.php?id=${id}" title="Print"><i class="mdi mdi-printer"></i></a>`;
         }

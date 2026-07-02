@@ -15,12 +15,11 @@ if ($saleId <= 0) {
     die('Invalid sales document.');
 }
 
-function printColumnExists(PDO $pdo, string $table, string $column): bool
+function colExists(PDO $pdo, string $table, string $column): bool
 {
     static $cache = [];
     $key = $table . '.' . $column;
-
-    if (array_key_exists($key, $cache)) {
+    if (isset($cache[$key])) {
         return $cache[$key];
     }
 
@@ -36,21 +35,21 @@ function printColumnExists(PDO $pdo, string $table, string $column): bool
         ':column_name' => $column
     ]);
 
-    $cache[$key] = (int)$stmt->fetchColumn() > 0;
+    $cache[$key] = ((int)$stmt->fetchColumn() > 0);
     return $cache[$key];
 }
 
-function printCurrentBusinessId(): int
+function currentBizId(): int
 {
     return function_exists('currentBusinessId') ? (int)currentBusinessId() : (int)($_SESSION['business_id'] ?? 0);
 }
 
-function printCurrentBranchId(): int
+function currentBrId(): int
 {
     return function_exists('currentBranchId') ? (int)currentBranchId() : (int)($_SESSION['branch_id'] ?? 0);
 }
 
-function salesPrintDocumentTypes(): array
+function docTypes(): array
 {
     return [
         1 => ['label' => 'Quotation', 'permission_key' => 'sales_quotation', 'legacy_keys' => ['quotation']],
@@ -61,10 +60,8 @@ function salesPrintDocumentTypes(): array
     ];
 }
 
-function salesPrintHasPermission(int $documentType, string $action): bool
+function canPrintDoc(int $documentType): bool
 {
-    $types = salesPrintDocumentTypes();
-
     if (function_exists('isPlatformOwner') && isPlatformOwner()) {
         return true;
     }
@@ -73,13 +70,14 @@ function salesPrintHasPermission(int $documentType, string $action): bool
         return true;
     }
 
+    $types = docTypes();
     if (!isset($types[$documentType])) {
         return false;
     }
 
     $keys = array_merge([$types[$documentType]['permission_key']], $types[$documentType]['legacy_keys'] ?? []);
     foreach ($keys as $key) {
-        if (hasPermission($key, $action)) {
+        if (hasPermission($key, 'print') || hasPermission($key, 'view')) {
             return true;
         }
     }
@@ -87,52 +85,128 @@ function salesPrintHasPermission(int $documentType, string $action): bool
     return false;
 }
 
-function money($amount): string
-{
-    return number_format((float)$amount, 2, '.', ',');
-}
-
-function qtyText($qty): string
-{
-    $qty = (float)$qty;
-    return rtrim(rtrim(number_format($qty, 2, '.', ''), '0'), '.');
-}
-
 function h($value): string
 {
     return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
 }
 
-function formatDatePrint($date): string
+function money($value): string
+{
+    return number_format((float)$value, 2, '.', ',');
+}
+
+function qtyFormat($value): string
+{
+    $value = (float)$value;
+    return rtrim(rtrim(number_format($value, 2, '.', ''), '0'), '.');
+}
+
+function datePrint($date): string
 {
     if (!$date || $date === '0000-00-00') {
         return '-';
     }
 
-    $time = strtotime($date);
-    return $time ? date('d-m-Y', $time) : h($date);
+    $ts = strtotime($date);
+    return $ts ? date('d-m-Y', $ts) : h($date);
 }
 
-$businessId = printCurrentBusinessId();
-$branchId = printCurrentBranchId();
+function convertNumberToWordsIndian($number): string
+{
+    $number = (int)round((float)$number);
+
+    if ($number === 0) {
+        return 'Zero';
+    }
+
+    $words = [
+        0 => '', 1 => 'One', 2 => 'Two', 3 => 'Three', 4 => 'Four', 5 => 'Five',
+        6 => 'Six', 7 => 'Seven', 8 => 'Eight', 9 => 'Nine', 10 => 'Ten',
+        11 => 'Eleven', 12 => 'Twelve', 13 => 'Thirteen', 14 => 'Fourteen',
+        15 => 'Fifteen', 16 => 'Sixteen', 17 => 'Seventeen', 18 => 'Eighteen',
+        19 => 'Nineteen', 20 => 'Twenty', 30 => 'Thirty', 40 => 'Forty',
+        50 => 'Fifty', 60 => 'Sixty', 70 => 'Seventy', 80 => 'Eighty', 90 => 'Ninety'
+    ];
+
+    $twoDigits = function ($num) use ($words) {
+        $num = (int)$num;
+        if ($num < 21) {
+            return $words[$num];
+        }
+        $ten = (int)(floor($num / 10) * 10);
+        $one = $num % 10;
+        return trim($words[$ten] . ' ' . $words[$one]);
+    };
+
+    $threeDigits = function ($num) use ($twoDigits, $words) {
+        $num = (int)$num;
+        $hundred = (int)floor($num / 100);
+        $rest = $num % 100;
+        $text = '';
+
+        if ($hundred > 0) {
+            $text .= $words[$hundred] . ' Hundred';
+        }
+
+        if ($rest > 0) {
+            $text .= ($text ? ' ' : '') . $twoDigits($rest);
+        }
+
+        return trim($text);
+    };
+
+    $parts = [];
+
+    $crore = (int)floor($number / 10000000);
+    $number %= 10000000;
+
+    $lakh = (int)floor($number / 100000);
+    $number %= 100000;
+
+    $thousand = (int)floor($number / 1000);
+    $number %= 1000;
+
+    $hundred = $number;
+
+    if ($crore > 0) {
+        $parts[] = $threeDigits($crore) . ' Crore';
+    }
+    if ($lakh > 0) {
+        $parts[] = $threeDigits($lakh) . ' Lakh';
+    }
+    if ($thousand > 0) {
+        $parts[] = $threeDigits($thousand) . ' Thousand';
+    }
+    if ($hundred > 0) {
+        $parts[] = $threeDigits($hundred);
+    }
+
+    return trim(implode(' ', $parts));
+}
+
+$businessId = currentBizId();
+$branchId = currentBrId();
 
 if ($businessId <= 0 || $branchId <= 0) {
     die('Invalid business / branch session.');
 }
 
-$zoneSelect = printColumnExists($pdo, 'customers', 'zone_id') ? 'c.zone_id' : 'NULL AS zone_id';
+$customerGstColumn = colExists($pdo, 'customers', 'gst_number') ? 'c.gst_number' : "'' AS gst_number";
+$customerAddressColumn = colExists($pdo, 'customers', 'address') ? 'c.address' : "'' AS address";
+$customerCityColumn = colExists($pdo, 'customers', 'city') ? 'c.city' : "'' AS city";
+$customerStateColumn = colExists($pdo, 'customers', 'state') ? 'c.state' : "'' AS state";
+$customerPincodeColumn = colExists($pdo, 'customers', 'pincode') ? 'c.pincode' : "'' AS pincode";
 
 $stmt = $pdo->prepare("
     SELECT
         s.*,
         COALESCE(c.customer_name, 'Walk-in Customer') AS customer_name,
         c.mobile AS customer_mobile,
-        c.gst_number AS customer_gst,
-        c.address AS customer_address,
-        c.city AS customer_city,
-        c.state AS customer_state,
-        c.pincode AS customer_pincode,
-        $zoneSelect
+        $customerGstColumn,
+        $customerAddressColumn,
+        $customerCityColumn,
+        $customerStateColumn,
+        $customerPincodeColumn
     FROM sales s
     LEFT JOIN customers c ON c.id = s.customer_id
     WHERE s.id = :id
@@ -147,19 +221,17 @@ $stmt->execute([
 ]);
 
 $sale = $stmt->fetch(PDO::FETCH_ASSOC);
-
 if (!$sale) {
     die('Sales document not found.');
 }
 
-$documentType = (int)$sale['document_type'];
-
-if (!salesPrintHasPermission($documentType, 'print') && !salesPrintHasPermission($documentType, 'view')) {
+$documentType = (int)($sale['document_type'] ?? 0);
+if (!canPrintDoc($documentType)) {
     die('You do not have permission to print this document.');
 }
 
-$types = salesPrintDocumentTypes();
-$documentTitle = $types[$documentType]['label'] ?? 'Sales Document';
+$docTypes = docTypes();
+$documentTitle = $docTypes[$documentType]['label'] ?? 'Sales Document';
 
 if ((int)($sale['invoice_type'] ?? 1) === 2 && $documentType === 5) {
     $documentTitle = 'Invoice';
@@ -181,52 +253,33 @@ $itemsStmt->execute([
 ]);
 $items = $itemsStmt->fetchAll(PDO::FETCH_ASSOC);
 
-$paymentsStmt = $pdo->prepare("
-    SELECT sp.*, pm.mode_name
-    FROM sales_payments sp
-    LEFT JOIN payment_modes pm ON pm.id = sp.payment_mode_id
-    WHERE sp.sales_id = :sales_id
-    AND sp.business_id = :business_id
-    AND sp.branch_id = :branch_id
-    AND sp.status = 1
-    ORDER BY sp.id ASC
-");
-$paymentsStmt->execute([
-    ':sales_id' => $saleId,
-    ':business_id' => $businessId,
-    ':branch_id' => $branchId
-]);
-$payments = $paymentsStmt->fetchAll(PDO::FETCH_ASSOC);
-
 $business = [
-    'name' => 'Universal ERP',
+    'name' => 'S.M TRADERS',
     'address' => '',
     'mobile' => '',
     'email' => '',
     'gst_number' => '',
-    'logo' => ''
+    'state' => '33-Tamil Nadu',
+    'bank_name' => '',
+    'bank_account_no' => '',
+    'bank_ifsc' => '',
+    'account_holder_name' => ''
 ];
 
 try {
-    $businessStmt = $pdo->prepare("
-        SELECT *
-        FROM businesses
-        WHERE id = :business_id
-        LIMIT 1
-    ");
+    $businessStmt = $pdo->prepare("SELECT * FROM businesses WHERE id = :business_id LIMIT 1");
     $businessStmt->execute([':business_id' => $businessId]);
     $businessRow = $businessStmt->fetch(PDO::FETCH_ASSOC);
 
     if ($businessRow) {
         $business['name'] = $businessRow['business_name'] ?? $businessRow['company_name'] ?? $business['name'];
-        $business['address'] = $businessRow['address'] ?? '';
-        $business['mobile'] = $businessRow['mobile'] ?? $businessRow['phone'] ?? '';
-        $business['email'] = $businessRow['email'] ?? '';
-        $business['gst_number'] = $businessRow['gst_number'] ?? '';
-        $business['logo'] = $businessRow['logo'] ?? $businessRow['logo_path'] ?? '';
+        $business['address'] = $businessRow['address'] ?? $business['address'];
+        $business['mobile'] = $businessRow['mobile'] ?? $businessRow['phone'] ?? $business['mobile'];
+        $business['email'] = $businessRow['email'] ?? $business['email'];
+        $business['gst_number'] = $businessRow['gst_number'] ?? $business['gst_number'];
+        $business['state'] = $businessRow['state'] ?? $business['state'];
     }
 } catch (Throwable $e) {
-    // Keep default business values when optional columns differ.
 }
 
 try {
@@ -249,78 +302,180 @@ try {
         $business['mobile'] = $settings['mobile'] ?? $settings['phone'] ?? $business['mobile'];
         $business['email'] = $settings['email'] ?? $business['email'];
         $business['gst_number'] = $settings['gst_number'] ?? $business['gst_number'];
-        $business['logo'] = $settings['logo'] ?? $settings['logo_path'] ?? $business['logo'];
+        $business['state'] = $settings['state'] ?? $business['state'];
+        $business['bank_name'] = $settings['bank_name'] ?? $business['bank_name'];
+        $business['bank_account_no'] = $settings['bank_account_no'] ?? $settings['account_no'] ?? $business['bank_account_no'];
+        $business['bank_ifsc'] = $settings['ifsc_code'] ?? $settings['bank_ifsc'] ?? $business['bank_ifsc'];
+        $business['account_holder_name'] = $settings['account_holder_name'] ?? $business['account_holder_name'];
     }
 } catch (Throwable $e) {
-    // Invoice settings optional.
 }
 
-$customerAddressParts = array_filter([
-    $sale['customer_address'] ?? '',
-    $sale['customer_city'] ?? '',
-    $sale['customer_state'] ?? '',
-    $sale['customer_pincode'] ?? ''
-]);
+$customerAddress = trim(implode(', ', array_filter([
+    $sale['address'] ?? '',
+    $sale['city'] ?? '',
+    $sale['pincode'] ?? ''
+])));
+
+$placeOfSupply = trim((string)($sale['state'] ?? ''));
+if ($placeOfSupply === '') {
+    $placeOfSupply = $business['state'];
+}
+
+$totalQty = 0;
+$totalMrp = 0;
+$totalDiscount = 0;
+$totalTax = 0;
+$totalAmount = 0;
+
+$taxBreakup = [];
+
+foreach ($items as $item) {
+    $qty = (float)($item['qty'] ?? 0);
+    $totalQty += $qty;
+
+    $lineDiscount = (float)($item['discount_amount'] ?? 0);
+    $lineTax = (float)($item['cgst_amount'] ?? 0) + (float)($item['sgst_amount'] ?? 0) + (float)($item['igst_amount'] ?? 0);
+    $lineTotal = (float)($item['line_total'] ?? 0);
+
+    $totalDiscount += $lineDiscount;
+    $totalTax += $lineTax;
+    $totalAmount += $lineTotal;
+
+    $gstRate = (float)($item['gst_percentage'] ?? 0);
+    $taxable = (float)($item['taxable_amount'] ?? 0);
+
+    if ($gstRate > 0) {
+        if ((float)($item['igst_amount'] ?? 0) > 0) {
+            $key = 'IGST_' . $gstRate;
+            if (!isset($taxBreakup[$key])) {
+                $taxBreakup[$key] = ['type' => 'IGST', 'rate' => $gstRate, 'taxable' => 0, 'amount' => 0];
+            }
+            $taxBreakup[$key]['taxable'] += $taxable;
+            $taxBreakup[$key]['amount'] += (float)$item['igst_amount'];
+        } else {
+            $halfRate = $gstRate / 2;
+            $cgstKey = 'CGST_' . $halfRate;
+            $sgstKey = 'SGST_' . $halfRate;
+
+            if (!isset($taxBreakup[$cgstKey])) {
+                $taxBreakup[$cgstKey] = ['type' => 'CGST', 'rate' => $halfRate, 'taxable' => 0, 'amount' => 0];
+            }
+            if (!isset($taxBreakup[$sgstKey])) {
+                $taxBreakup[$sgstKey] = ['type' => 'SGST', 'rate' => $halfRate, 'taxable' => 0, 'amount' => 0];
+            }
+
+            $taxBreakup[$cgstKey]['taxable'] += $taxable;
+            $taxBreakup[$cgstKey]['amount'] += (float)($item['cgst_amount'] ?? 0);
+            $taxBreakup[$sgstKey]['taxable'] += $taxable;
+            $taxBreakup[$sgstKey]['amount'] += (float)($item['sgst_amount'] ?? 0);
+        }
+    }
+}
+
+$grandTotal = (float)($sale['grand_total'] ?? $totalAmount);
+$roundOff = (float)($sale['round_off'] ?? 0);
+$words = convertNumberToWordsIndian($grandTotal) . ' Rupees only';
 
 $page_title = $documentTitle . ' - ' . ($sale['sales_no'] ?? '');
 ?>
 <!doctype html>
 <html lang="en">
 <head>
-    <?php include BASE_PATH . 'includes/head.php'; ?>
+    <meta charset="utf-8">
+    <title><?= h($page_title); ?></title>
     <style>
+        * {
+            box-sizing: border-box;
+        }
         body {
-            background: #f5f5f5;
-            color: #111;
-            font-size: 12px;
-        }
-        .print-toolbar {
-            max-width: 210mm;
-            margin: 12px auto;
-            display: flex;
-            justify-content: flex-end;
-            gap: 8px;
-        }
-        .print-sheet {
-            max-width: 210mm;
-            min-height: 297mm;
-            margin: 0 auto 16px;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 11px;
+            color: #000;
             background: #fff;
-            padding: 12mm;
-            box-shadow: 0 0 8px rgba(0,0,0,.12);
-        }
-        .company-title {
-            font-size: 22px;
-            font-weight: 700;
             margin: 0;
-            text-transform: uppercase;
+            padding: 10px;
         }
-        .doc-title {
-            border: 1px solid #111;
-            font-size: 16px;
-            font-weight: 700;
+        .toolbar {
+            width: 198mm;
+            margin: 0 auto 8px;
+            text-align: right;
+        }
+        .toolbar button,
+        .toolbar a {
+            display: inline-block;
+            border: 1px solid #777;
+            background: #f2f2f2;
+            color: #000;
+            padding: 6px 12px;
+            text-decoration: none;
+            cursor: pointer;
+            font-size: 12px;
+            margin-left: 4px;
+        }
+        .invoice {
+            width: 198mm;
+            margin: 0 auto;
+            border: 1px solid #000;
+        }
+        .top-title {
             text-align: center;
-            padding: 6px;
-            text-transform: uppercase;
-            margin: 8px 0;
+            font-weight: 700;
+            font-size: 13px;
+            padding: 4px 0 2px;
+            border-bottom: 1px solid #000;
         }
-        .print-table {
+        .company {
+            text-align: center;
+            padding: 6px 8px 5px;
+            border-bottom: 1px solid #000;
+            line-height: 1.35;
+        }
+        .company-name {
+            font-size: 19px;
+            font-weight: 800;
+            margin-bottom: 2px;
+        }
+        .two-col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            border-bottom: 1px solid #000;
+        }
+        .box {
+            padding: 5px 6px;
+            min-height: 105px;
+        }
+        .box + .box {
+            border-left: 1px solid #000;
+        }
+        .box-title {
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+        .right-details {
+            text-align: right;
+            line-height: 1.8;
+        }
+        table {
             width: 100%;
             border-collapse: collapse;
         }
-        .print-table th,
-        .print-table td {
-            border: 1px solid #222;
-            padding: 5px;
+        th,
+        td {
+            border: 1px solid #000;
+            padding: 4px 4px;
             vertical-align: top;
         }
-        .print-table th {
-            background: #f1f1f1;
+        th {
             font-weight: 700;
+            text-align: center;
         }
-        .no-border td,
-        .no-border th {
-            border: 0 !important;
+        .items-table th,
+        .items-table td {
+            font-size: 10.5px;
+        }
+        .items-table th {
+            background: #fff;
         }
         .text-right {
             text-align: right;
@@ -328,322 +483,294 @@ $page_title = $documentTitle . ' - ' . ($sale['sales_no'] ?? '');
         .text-center {
             text-align: center;
         }
-        .muted {
-            color: #666;
+        .bold {
+            font-weight: 700;
         }
-        .summary-table {
-            width: 45%;
-            margin-left: auto;
-            border-collapse: collapse;
+        .no-border {
+            border: 0 !important;
         }
-        .summary-table td {
-            border: 1px solid #222;
+        .no-top-border {
+            border-top: 0 !important;
+        }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            border-top: 0;
+        }
+        .summary-left {
+            border-right: 1px solid #000;
+        }
+        .summary-table td,
+        .summary-table th {
+            font-size: 10.5px;
+            padding: 4px;
+        }
+        .amount-summary td {
             padding: 5px;
         }
-        .signature-box {
-            height: 70px;
-            border: 1px solid #222;
-            display: flex;
-            align-items: end;
-            justify-content: center;
-            padding-bottom: 8px;
+        .words {
+            border-top: 1px solid #000;
+            padding: 5px 6px;
+            min-height: 42px;
+            text-align: center;
+        }
+        .bottom-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            border-top: 1px solid #000;
+            min-height: 92px;
+        }
+        .bottom-grid > div {
+            padding: 7px 8px;
+        }
+        .bottom-grid > div + div {
+            border-left: 1px solid #000;
+        }
+        .small-line {
+            line-height: 1.7;
+        }
+        .item-name {
             font-weight: 700;
         }
         @media print {
             @page {
                 size: A4;
-                margin: 8mm;
+                margin: 6mm;
             }
             body {
-                background: #fff;
-            }
-            .print-toolbar {
-                display: none !important;
-            }
-            .print-sheet {
-                margin: 0;
-                max-width: 100%;
-                min-height: auto;
                 padding: 0;
-                box-shadow: none;
+            }
+            .toolbar {
+                display: none;
+            }
+            .invoice {
+                width: 100%;
+                margin: 0;
             }
         }
     </style>
 </head>
-
 <body>
-<div class="print-toolbar">
-    <a href="<?= BASE_URL; ?>pages/sales.php?id=<?= (int)$saleId; ?>&mode=edit" class="btn btn-light">
-        <i class="mdi mdi-arrow-left me-1"></i> Back
-    </a>
-    <button type="button" class="btn btn-primary" onclick="window.print();">
-        <i class="mdi mdi-printer me-1"></i> Print
-    </button>
+
+<div class="toolbar">
+    <a href="<?= h(BASE_URL); ?>pages/sales.php?id=<?= (int)$saleId; ?>&mode=edit">Back</a>
+    <button type="button" onclick="window.print()">Print</button>
 </div>
 
-<div class="print-sheet">
+<div class="invoice">
 
-    <table class="print-table no-border">
-        <tr>
-            <td style="width: 70%;">
-                <h1 class="company-title"><?= h($business['name']); ?></h1>
-                <?php if (!empty($business['address'])): ?>
-                    <div><?= nl2br(h($business['address'])); ?></div>
-                <?php endif; ?>
-                <?php if (!empty($business['mobile'])): ?>
-                    <div>Mobile: <?= h($business['mobile']); ?></div>
-                <?php endif; ?>
-                <?php if (!empty($business['email'])): ?>
-                    <div>Email: <?= h($business['email']); ?></div>
-                <?php endif; ?>
-                <?php if (!empty($business['gst_number'])): ?>
-                    <div>GSTIN: <?= h($business['gst_number']); ?></div>
-                <?php endif; ?>
-            </td>
-            <td class="text-right" style="width: 30%;">
-                <?php if (!empty($business['logo'])): ?>
-                    <img src="<?= h(BASE_URL . ltrim($business['logo'], '/')); ?>" style="max-width:100px; max-height:70px;" alt="Logo">
-                <?php endif; ?>
-            </td>
-        </tr>
-    </table>
+    <div class="top-title"><?= h($documentTitle); ?></div>
 
-    <div class="doc-title"><?= h($documentTitle); ?></div>
+    <div class="company">
+        <div class="company-name"><?= h($business['name']); ?></div>
+        <?php if (!empty($business['address'])): ?>
+            <div><?= h($business['address']); ?></div>
+        <?php endif; ?>
+        <?php if (!empty($business['mobile'])): ?>
+            <div>Phone no: <?= h($business['mobile']); ?></div>
+        <?php endif; ?>
+        <div>
+            <?php if (!empty($business['gst_number'])): ?>
+                GSTIN: <?= h($business['gst_number']); ?>,
+            <?php endif; ?>
+            State: <?= h($business['state']); ?>
+        </div>
+    </div>
 
-    <table class="print-table">
-        <tr>
-            <td style="width: 50%;">
-                <strong>Bill To</strong><br>
-                <strong><?= h($sale['customer_name'] ?? 'Walk-in Customer'); ?></strong><br>
-                <?php if (!empty($sale['customer_mobile'])): ?>
-                    Mobile: <?= h($sale['customer_mobile']); ?><br>
-                <?php endif; ?>
-                <?php if (!empty($sale['customer_gst'])): ?>
-                    GSTIN: <?= h($sale['customer_gst']); ?><br>
-                <?php endif; ?>
-                <?php if ($customerAddressParts): ?>
-                    <?= h(implode(', ', $customerAddressParts)); ?>
-                <?php endif; ?>
-            </td>
-            <td style="width: 50%;">
-                <table class="print-table no-border">
-                    <tr>
-                        <td><strong>Document No</strong></td>
-                        <td>: <?= h($sale['sales_no'] ?? ''); ?></td>
-                    </tr>
-                    <tr>
-                        <td><strong>Date</strong></td>
-                        <td>: <?= formatDatePrint($sale['sales_date'] ?? ''); ?></td>
-                    </tr>
-                    <?php if (!empty($sale['due_date'])): ?>
-                    <tr>
-                        <td><strong>Due Date</strong></td>
-                        <td>: <?= formatDatePrint($sale['due_date']); ?></td>
-                    </tr>
-                    <?php endif; ?>
-                    <?php if (!empty($sale['validity_date'])): ?>
-                    <tr>
-                        <td><strong>Validity</strong></td>
-                        <td>: <?= formatDatePrint($sale['validity_date']); ?></td>
-                    </tr>
-                    <?php endif; ?>
-                    <tr>
-                        <td><strong>Invoice Type</strong></td>
-                        <td>: <?= ((int)($sale['invoice_type'] ?? 1) === 1) ? 'GST' : 'Non-GST'; ?></td>
-                    </tr>
-                </table>
-            </td>
-        </tr>
-    </table>
+    <div class="two-col">
+        <div class="box">
+            <div class="box-title">Bill To</div>
+            <div class="bold"><?= h($sale['customer_name'] ?? 'Walk-in Customer'); ?></div>
+            <?php if (!empty($customerAddress)): ?>
+                <div class="small-line"><?= h($customerAddress); ?></div>
+            <?php endif; ?>
+            <?php if (!empty($sale['customer_mobile'])): ?>
+                <div class="small-line">Contact No. : <?= h($sale['customer_mobile']); ?></div>
+            <?php endif; ?>
+            <?php if (!empty($sale['gst_number'])): ?>
+                <div class="small-line">GSTIN : <?= h($sale['gst_number']); ?></div>
+            <?php endif; ?>
+            <div class="small-line">State: <?= h($placeOfSupply); ?></div>
+        </div>
 
-    <br>
+        <div class="box right-details">
+            <div class="box-title">Invoice Details</div>
+            <div><?= h($documentTitle); ?> No. : <?= h($sale['sales_no'] ?? ''); ?></div>
+            <div>Date : <?= datePrint($sale['sales_date'] ?? ''); ?></div>
+            <div>Place of supply: <?= h($placeOfSupply); ?></div>
+        </div>
+    </div>
 
-    <table class="print-table">
+    <table class="items-table">
         <thead>
         <tr>
-            <th style="width: 30px;">#</th>
-            <th>Product</th>
-            <th>Batch</th>
-            <th>HSN</th>
-            <th class="text-right">Unit</th>
-            <th class="text-right">Loose</th>
-            <th class="text-right">Qty</th>
-            <th class="text-right">Rate</th>
-            <th class="text-right">Disc</th>
-            <th class="text-right">Taxable</th>
-            <th class="text-right">GST</th>
-            <th class="text-right">Total</th>
+            <th style="width: 25px;">#</th>
+            <th style="width: 160px;">Item name</th>
+            <th style="width: 65px;">HSN/ SAC</th>
+            <th style="width: 55px;">MRP</th>
+            <th style="width: 58px;">Quantity</th>
+            <th style="width: 48px;">Unit</th>
+            <th style="width: 70px;">Price/ Unit</th>
+            <th style="width: 72px;">Discount</th>
+            <th style="width: 70px;">GST</th>
+            <th style="width: 80px;">Amount</th>
         </tr>
         </thead>
         <tbody>
         <?php if (!$items): ?>
             <tr>
-                <td colspan="12" class="text-center">No items found.</td>
+                <td colspan="10" class="text-center">No items found.</td>
             </tr>
         <?php endif; ?>
 
         <?php foreach ($items as $index => $item): ?>
             <?php
-                $discountText = ((int)($item['discount_type'] ?? 1) === 1)
-                    ? qtyText($item['discount_value'] ?? 0) . '%'
-                    : '₹' . money($item['discount_value'] ?? 0);
-
-                $gstText = qtyText($item['gst_percentage'] ?? 0) . '%';
+                $qty = (float)($item['qty'] ?? 0);
+                $mrp = (float)($item['mrp'] ?? $item['selling_rate'] ?? 0);
+                $price = (float)($item['selling_rate'] ?? 0);
+                $lineDiscount = (float)($item['discount_amount'] ?? 0);
+                $discountRate = (float)($item['discount_value'] ?? 0);
+                $gstRate = (float)($item['gst_percentage'] ?? 0);
                 $taxAmount = (float)($item['cgst_amount'] ?? 0) + (float)($item['sgst_amount'] ?? 0) + (float)($item['igst_amount'] ?? 0);
             ?>
             <tr>
                 <td class="text-center"><?= $index + 1; ?></td>
                 <td>
-                    <strong><?= h($item['product_name'] ?? ''); ?></strong>
+                    <span class="item-name"><?= h($item['product_name'] ?? ''); ?></span>
                     <?php if (!empty($item['product_code'])): ?>
-                        <br><span class="muted"><?= h($item['product_code']); ?></span>
+                        <br><?= h($item['product_code']); ?>
                     <?php endif; ?>
                 </td>
-                <td>
-                    <?= h($item['purchase_batch_no'] ?? '-'); ?>
-                    <?php if (!empty($item['purchase_bill_no'])): ?>
-                        <br><span class="muted"><?= h($item['purchase_bill_no']); ?></span>
-                    <?php endif; ?>
-                </td>
-                <td><?= h($item['hsn_code'] ?? '-'); ?></td>
-                <td class="text-right"><?= qtyText($item['unit_qty'] ?? 0); ?></td>
-                <td class="text-right"><?= qtyText($item['loose_qty'] ?? 0); ?></td>
-                <td class="text-right"><?= qtyText($item['qty'] ?? 0); ?></td>
-                <td class="text-right"><?= money($item['selling_rate'] ?? 0); ?></td>
-                <td class="text-right"><?= h($discountText); ?></td>
-                <td class="text-right"><?= money($item['taxable_amount'] ?? 0); ?></td>
-                <td class="text-right">
-                    <?= h($gstText); ?><br>
-                    <span class="muted"><?= money($taxAmount); ?></span>
-                </td>
-                <td class="text-right"><?= money($item['line_total'] ?? 0); ?></td>
+                <td><?= h($item['hsn_code'] ?? ''); ?></td>
+                <td class="text-right">₹ <?= money($mrp); ?></td>
+                <td class="text-right"><?= qtyFormat($qty); ?></td>
+                <td class="text-center"><?= h($item['unit_name'] ?? $item['unit'] ?? 'PCS'); ?></td>
+                <td class="text-right">₹ <?= money($price); ?></td>
+                <td class="text-right">₹ <?= money($lineDiscount); ?> (<?= qtyFormat($discountRate); ?>%)</td>
+                <td class="text-right">₹ <?= money($taxAmount); ?> (<?= qtyFormat($gstRate); ?>%)</td>
+                <td class="text-right">₹ <?= money($item['line_total'] ?? 0); ?></td>
             </tr>
         <?php endforeach; ?>
+
+        <tr>
+            <td></td>
+            <td class="bold">Total</td>
+            <td></td>
+            <td></td>
+            <td class="text-right bold"><?= qtyFormat($totalQty); ?></td>
+            <td></td>
+            <td></td>
+            <td class="text-right bold">₹ <?= money($totalDiscount); ?></td>
+            <td class="text-right bold">₹ <?= money($totalTax); ?></td>
+            <td class="text-right bold">₹ <?= money($grandTotal); ?></td>
+        </tr>
         </tbody>
     </table>
 
-    <br>
-
-    <table class="summary-table">
-        <tr>
-            <td>Sub Total</td>
-            <td class="text-right">₹<?= money($sale['sub_total'] ?? 0); ?></td>
-        </tr>
-        <tr>
-            <td>Discount</td>
-            <td class="text-right">₹<?= money($sale['discount_amount'] ?? 0); ?></td>
-        </tr>
-        <tr>
-            <td>Taxable Amount</td>
-            <td class="text-right">₹<?= money($sale['taxable_amount'] ?? 0); ?></td>
-        </tr>
-        <?php if ((float)($sale['cgst_amount'] ?? 0) > 0): ?>
-        <tr>
-            <td>CGST</td>
-            <td class="text-right">₹<?= money($sale['cgst_amount']); ?></td>
-        </tr>
-        <?php endif; ?>
-        <?php if ((float)($sale['sgst_amount'] ?? 0) > 0): ?>
-        <tr>
-            <td>SGST</td>
-            <td class="text-right">₹<?= money($sale['sgst_amount']); ?></td>
-        </tr>
-        <?php endif; ?>
-        <?php if ((float)($sale['igst_amount'] ?? 0) > 0): ?>
-        <tr>
-            <td>IGST</td>
-            <td class="text-right">₹<?= money($sale['igst_amount']); ?></td>
-        </tr>
-        <?php endif; ?>
-        <?php if ((float)($sale['shipping_charges'] ?? 0) > 0): ?>
-        <tr>
-            <td>Shipping</td>
-            <td class="text-right">₹<?= money($sale['shipping_charges']); ?></td>
-        </tr>
-        <?php endif; ?>
-        <?php if ((float)($sale['round_off'] ?? 0) != 0): ?>
-        <tr>
-            <td>Round Off</td>
-            <td class="text-right">₹<?= money($sale['round_off']); ?></td>
-        </tr>
-        <?php endif; ?>
-        <tr>
-            <td><strong>Grand Total</strong></td>
-            <td class="text-right"><strong>₹<?= money($sale['grand_total'] ?? 0); ?></strong></td>
-        </tr>
-        <tr>
-            <td>Paid</td>
-            <td class="text-right">₹<?= money($sale['paid_amount'] ?? 0); ?></td>
-        </tr>
-        <tr>
-            <td>Due</td>
-            <td class="text-right">₹<?= money($sale['due_amount'] ?? 0); ?></td>
-        </tr>
-    </table>
-
-    <?php if ($payments): ?>
-        <br>
-        <strong>Payment Details</strong>
-        <table class="print-table">
-            <thead>
-            <tr>
-                <th>#</th>
-                <th>Mode</th>
-                <th>Date</th>
-                <th>Reference</th>
-                <th class="text-right">Amount</th>
-            </tr>
-            </thead>
-            <tbody>
-            <?php foreach ($payments as $index => $payment): ?>
+    <div class="summary-grid">
+        <div class="summary-left">
+            <table class="summary-table">
+                <thead>
                 <tr>
-                    <td class="text-center"><?= $index + 1; ?></td>
-                    <td><?= h($payment['mode_name'] ?? ''); ?></td>
-                    <td><?= formatDatePrint($payment['payment_date'] ?? ''); ?></td>
-                    <td><?= h($payment['reference_no'] ?? ''); ?></td>
-                    <td class="text-right">₹<?= money($payment['payment_amount'] ?? 0); ?></td>
+                    <th>Tax type</th>
+                    <th>Taxable amount</th>
+                    <th>Rate</th>
+                    <th>Tax amount</th>
                 </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
-    <?php endif; ?>
+                </thead>
+                <tbody>
+                <?php if (!$taxBreakup): ?>
+                    <tr>
+                        <td colspan="4" class="text-center">No tax</td>
+                    </tr>
+                <?php endif; ?>
+                <?php foreach ($taxBreakup as $tax): ?>
+                    <tr>
+                        <td><?= h($tax['type']); ?></td>
+                        <td class="text-right">₹ <?= money($tax['taxable']); ?></td>
+                        <td class="text-right"><?= qtyFormat($tax['rate']); ?>%</td>
+                        <td class="text-right">₹ <?= money($tax['amount']); ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+            <div class="words">
+                <div class="bold">Invoice Amount In Words</div>
+                <div><?= h($words); ?></div>
+            </div>
+        </div>
 
-    <?php if (!empty($sale['notes']) || !empty($sale['terms'])): ?>
-        <br>
-        <table class="print-table">
-            <?php if (!empty($sale['notes'])): ?>
-            <tr>
-                <td><strong>Notes:</strong><br><?= nl2br(h($sale['notes'])); ?></td>
-            </tr>
+        <div>
+            <table class="amount-summary">
+                <tr>
+                    <td>Sub Total</td>
+                    <td class="text-right">₹ <?= money($sale['sub_total'] ?? 0); ?></td>
+                </tr>
+                <?php if ((float)($sale['discount_amount'] ?? 0) > 0): ?>
+                <tr>
+                    <td>Discount</td>
+                    <td class="text-right">₹ <?= money($sale['discount_amount']); ?></td>
+                </tr>
+                <?php endif; ?>
+                <?php if ((float)($sale['shipping_charges'] ?? 0) > 0): ?>
+                <tr>
+                    <td>Shipping</td>
+                    <td class="text-right">₹ <?= money($sale['shipping_charges']); ?></td>
+                </tr>
+                <?php endif; ?>
+                <tr>
+                    <td>Round off</td>
+                    <td class="text-right">₹ <?= money($roundOff); ?></td>
+                </tr>
+                <tr>
+                    <td class="bold">Total</td>
+                    <td class="text-right bold">₹ <?= money($grandTotal); ?></td>
+                </tr>
+                <?php if ((float)($sale['paid_amount'] ?? 0) > 0): ?>
+                <tr>
+                    <td>Paid</td>
+                    <td class="text-right">₹ <?= money($sale['paid_amount']); ?></td>
+                </tr>
+                <tr>
+                    <td>Balance</td>
+                    <td class="text-right">₹ <?= money($sale['due_amount'] ?? 0); ?></td>
+                </tr>
+                <?php endif; ?>
+            </table>
+        </div>
+    </div>
+
+    <div class="bottom-grid">
+        <div>
+            <div class="bold">Bank Details</div>
+            <?php if (!empty($business['bank_name'])): ?>
+                <div class="small-line">Name : <?= h($business['bank_name']); ?></div>
             <?php endif; ?>
-            <?php if (!empty($sale['terms'])): ?>
-            <tr>
-                <td><strong>Terms:</strong><br><?= nl2br(h($sale['terms'])); ?></td>
-            </tr>
+            <?php if (!empty($business['bank_account_no'])): ?>
+                <div class="small-line">Account No. : <?= h($business['bank_account_no']); ?></div>
             <?php endif; ?>
-        </table>
-    <?php endif; ?>
+            <?php if (!empty($business['bank_ifsc'])): ?>
+                <div class="small-line">IFSC code : <?= h($business['bank_ifsc']); ?></div>
+            <?php endif; ?>
+            <?php if (!empty($business['account_holder_name'])): ?>
+                <div class="small-line">Account holder's name : <?= h($business['account_holder_name']); ?></div>
+            <?php endif; ?>
+        </div>
 
-    <br><br>
-
-    <table class="print-table no-border">
-        <tr>
-            <td style="width: 55%;">
-                <strong>Declaration</strong><br>
-                <span class="muted">Goods once sold will be taken back only as per company policy.</span>
-            </td>
-            <td style="width: 45%;">
-                <div class="signature-box">Authorized Signature</div>
-            </td>
-        </tr>
-    </table>
+        <div>
+            <div class="bold">Terms and Conditions</div>
+            <div class="small-line">
+                <?= !empty($sale['terms']) ? nl2br(h($sale['terms'])) : 'Thanks for doing business with us!'; ?>
+            </div>
+        </div>
+    </div>
 
 </div>
 
 <script>
     window.addEventListener('load', function () {
-        const autoPrint = new URLSearchParams(window.location.search).get('print');
-        if (autoPrint === '1') {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('print') === '1') {
             window.print();
         }
     });

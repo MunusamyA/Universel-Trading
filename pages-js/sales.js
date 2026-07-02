@@ -1546,12 +1546,18 @@ function addOrUpdateSalesItem() {
             success: function (response) {
                 if (response.status === true) {
                     showAppToast('success', response.message || 'Sale saved successfully.');
-                    clearDraftStorage();
 
-                    if (response.data && response.data.id) {
-                        $('#saleId').val(response.data.id);
+                    let savedId = response.data && response.data.id ? parseInt(response.data.id) : 0;
+
+                    // Clear only current sales draft/session items after save/generate/final invoice.
+                    // Hold bills are stored in HOLD_KEY and are not removed here.
+                    clearDraftStorage();
+                    clearCurrentScreen();
+                    renderSalesActionButtons({});
+
+                    if (savedId > 0) {
+                        $('#documentModeText').text('Saved: ' + (response.data.sales_no || ''));
                     }
-                    renderSalesActionButtons(response.data && response.data.sale ? response.data.sale : {});
                 } else {
                     handleApiError(response);
                 }
@@ -1756,7 +1762,8 @@ function addOrUpdateSalesItem() {
         $('#customerSearch').val('');
         $('#customerInfo').text('');
         $('#customerZoneFilter').val('');
-        $('#documentType').val('1');
+        let firstDocType = $('#documentType option:first').val() || '';
+        $('#documentType').val(firstDocType).prop('disabled', false);
         $('#invoiceType').val('1');
         syncSwitchControls();
         $('#salesDate').val(currentDate());

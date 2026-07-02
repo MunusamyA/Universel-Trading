@@ -1,6 +1,5 @@
 <?php
 require_once __DIR__ . '/../includes/config.php';
-require_once BASE_PATH . 'includes/db.php';
 require_once BASE_PATH . 'includes/security.php';
 require_once BASE_PATH . 'includes/auth.php';
 
@@ -36,9 +35,9 @@ $page_title = 'Customers | Universal ERP';
                         <div class="page-title-box d-flex align-items-center justify-content-between">
                             <h4 class="mb-0">Customers</h4>
                             <div class="page-title-right">
-                                <button type="button" class="btn btn-primary" id="addCustomerBtn">
+                                <a href="<?= BASE_URL; ?>pages/customers-create.php" class="btn btn-primary">
                                     <i class="mdi mdi-plus me-1"></i> Add Customer
-                                </button>
+                                </a>
                             </div>
                         </div>
                     </div>
@@ -101,7 +100,7 @@ $page_title = 'Customers | Universal ERP';
                                 </select>
                             </div>
                             <div class="col-md-3 text-end">
-                                <button class="btn btn-light" id="refreshCustomersBtn">
+                                <button type="button" class="btn btn-light" id="refreshCustomersBtn">
                                     <i class="mdi mdi-refresh me-1"></i> Refresh
                                 </button>
                             </div>
@@ -116,9 +115,9 @@ $page_title = 'Customers | Universal ERP';
                                     <th>Zone</th>
                                     <th>Contact</th>
                                     <th>GST</th>
-                                    <th>Outstanding</th>
+                                    <th class="text-end">Outstanding</th>
                                     <th>Status</th>
-                                    <th width="120">Action</th>
+                                    <th width="170" class="text-end">Action</th>
                                 </tr>
                                 </thead>
                                 <tbody id="customerTableBody">
@@ -134,95 +133,6 @@ $page_title = 'Customers | Universal ERP';
             </div>
         </div>
         <?php include BASE_PATH . 'includes/footer.php'; ?>
-    </div>
-</div>
-
-<div class="modal fade" id="customerModal" tabindex="-1" aria-labelledby="customerModalTitle" aria-hidden="true">
-    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
-        <div class="modal-content">
-            <form id="customerForm" autocomplete="off">
-                <?= csrfTokenInput(); ?>
-                <input type="hidden" name="customer_id" id="customer_id" value="">
-
-                <div class="modal-header">
-                    <h5 class="modal-title" id="customerModalTitle">Add Customer</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-
-                <div class="modal-body" style="max-height: calc(100vh - 190px); overflow-y: auto;">
-                    <h5 class="font-size-15 mb-3">Customer Details</h5>
-
-                    <div class="row">
-                        <div class="col-md-6">
-                            <label class="form-label">Customer Name <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" id="customer_name" name="customer_name" placeholder="Enter customer name">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label">Zone <span class="text-danger">*</span></label>
-                            <select class="form-select" id="zone_id" name="zone_id">
-                                <option value="">Select Zone</option>
-                            </select>
-                        </div>
-
-                        <div class="col-md-4 mt-3">
-                            <label class="form-label">Mobile</label>
-                            <input type="text" class="form-control" id="mobile" name="mobile" maxlength="10" placeholder="Enter mobile">
-                        </div>
-                        <div class="col-md-4 mt-3">
-                            <label class="form-label">Email</label>
-                            <input type="email" class="form-control" id="email" name="email" placeholder="Enter email">
-                        </div>
-                        <div class="col-md-4 mt-3">
-                            <label class="form-label">GST Number</label>
-                            <input type="text" class="form-control text-uppercase" id="gst_number" name="gst_number" placeholder="GSTIN">
-                        </div>
-                    </div>
-
-                    <h5 class="font-size-15 mb-3 mt-4">Address Details</h5>
-
-                    <div class="row">
-                        <div class="col-md-12">
-                            <label class="form-label">Address</label>
-                            <textarea class="form-control" id="address" name="address" rows="2" placeholder="Enter address"></textarea>
-                        </div>
-                        <div class="col-md-4 mt-3">
-                            <label class="form-label">City</label>
-                            <input type="text" class="form-control" id="city" name="city" placeholder="Enter city">
-                        </div>
-                        <div class="col-md-4 mt-3">
-                            <label class="form-label">State</label>
-                            <input type="text" class="form-control" id="state" name="state" value="Tamil Nadu" placeholder="Enter state">
-                        </div>
-                        <div class="col-md-4 mt-3">
-                            <label class="form-label">Pincode</label>
-                            <input type="text" class="form-control" id="pincode" name="pincode" maxlength="6" placeholder="Enter pincode">
-                        </div>
-                    </div>
-
-                    <h5 class="font-size-15 mb-3 mt-4">Outstanding & Status</h5>
-
-                    <div class="row">
-                        <div class="col-md-6">
-                            <label class="form-label">Opening Outstanding</label>
-                            <input type="number" step="0.01" min="0" class="form-control" id="opening_outstanding" name="opening_outstanding" value="0.00">
-                            <small class="text-muted">Add customer: current outstanding = opening outstanding.</small>
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label">Status</label>
-                            <select class="form-select" id="status" name="status">
-                                <option value="1">Active</option>
-                                <option value="2">Inactive</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
-                    <button type="submit" class="btn btn-primary" id="saveCustomerBtn">Save Customer</button>
-                </div>
-            </form>
-        </div>
     </div>
 </div>
 
