@@ -33,9 +33,16 @@ $(document).ready(function () {
         });
 
         $(document).on('click', '.convert-doc-btn', function () {
-            let id = parseInt($(this).data('id') || 0);
-            let sourceType = parseInt($(this).data('source-type') || 0);
-            let targetType = parseInt($(this).data('target-type') || 0);
+            let id = parseInt($(this).attr('data-id') || $(this).data('id') || 0);
+
+            /*
+             * Source type must be the CURRENT document_type of this row.
+             * Do not use old source_document_type from previously generated rows.
+             * Otherwise api/sales.php throws:
+             * "Source document type mismatch. Please reload and try again."
+             */
+            let sourceType = parseInt($(this).attr('data-source-type') || $(this).data('source-type') || 0);
+            let targetType = parseInt($(this).attr('data-target-type') || $(this).data('target-type') || 0);
 
             if (id <= 0 || sourceType <= 0 || targetType <= 0) {
                 return;
@@ -139,9 +146,8 @@ $(document).ready(function () {
         let html = '';
 
         $.each(rows, function (index, row) {
-            let docType = parseInt(row.document_type || 0);
-            let converted = parseInt(row.conversion_status || 0) === 1 ||
-                parseInt(row.converted_to_sale_id || 0) > 0;
+            let docType = currentDocumentType(row);
+            let converted = isConvertedToAnotherRow(row, docType);
 
             html += `
                 <tr>
@@ -192,9 +198,60 @@ $(document).ready(function () {
         $('#dueCard').text(formatCurrency(dueAmount));
     }
 
+    function currentDocumentType(row) {
+        row = row || {};
+
+        let documentType = parseInt(row.document_type || 0);
+        let convertedToDocumentType = parseInt(row.converted_to_document_type || 0);
+        let convertedToSaleId = parseInt(row.converted_to_sale_id || 0);
+
+        /*
+         * Same-row generate flow:
+         * Your API updates the same sales.id and changes document_type.
+         * In some responses, converted_to_document_type may be newer than
+         * document_type. Use it only when this row was not converted into
+         * another sales row.
+         */
+        if (convertedToSaleId <= 0 && convertedToDocumentType > 0) {
+            documentType = convertedToDocumentType;
+        }
+
+        return documentType;
+    }
+
+    function isGeneratedToAnotherRow(row, currentType) {
+        return isConvertedToAnotherRow(row, currentType);
+    }
+
+    function isConvertedToAnotherRow(row, currentType) {
+        row = row || {};
+
+        let id = parseInt(row.id || 0);
+        let convertedToSaleId = parseInt(row.converted_to_sale_id || 0);
+        let convertedToDocumentType = parseInt(row.converted_to_document_type || 0);
+
+        if (convertedToSaleId <= 0) {
+            return false;
+        }
+
+        /*
+         * If API updates same row, converted_to_sale_id may be empty or same id.
+         * Only treat as generated/locked when it points to another document row.
+         */
+        if (convertedToSaleId === id) {
+            return false;
+        }
+
+        if (convertedToDocumentType > 0 && convertedToDocumentType === parseInt(currentType || 0)) {
+            return false;
+        }
+
+        return true;
+    }
+
     function actionButtons(row, converted) {
         let id = parseInt(row.id || 0);
-        let docType = parseInt(row.document_type || 0);
+        let docType = currentDocumentType(row);
 
         let html = `<div class="btn-group btn-group-sm">`;
 
@@ -236,10 +293,10 @@ $(document).ready(function () {
                         <button type="button"
                                 class="btn btn-outline-info convert-doc-btn"
                                 data-id="${id}"
-                                data-source-type="1"
+                                data-source-type="${docType}"
                                 data-target-type="2"
-                                title="Convert to Proforma">
-                            <i class="mdi mdi-file-document-outline"></i>
+                                title="Generate Proforma Bill">
+                            <i class="mdi mdi-file-document-plus-outline"></i>
                         </button>
                     `;
                 }
@@ -249,10 +306,10 @@ $(document).ready(function () {
                         <button type="button"
                                 class="btn btn-outline-success convert-doc-btn"
                                 data-id="${id}"
-                                data-source-type="1"
+                                data-source-type="${docType}"
                                 data-target-type="3"
-                                title="Convert to Sales Bill">
-                            <i class="mdi mdi-receipt-text-outline"></i>
+                                title="Generate Sales Bill">
+                            <i class="mdi mdi-receipt-text-plus-outline"></i>
                         </button>
                     `;
                 }
@@ -262,9 +319,9 @@ $(document).ready(function () {
                         <button type="button"
                                 class="btn btn-warning convert-doc-btn"
                                 data-id="${id}"
-                                data-source-type="1"
+                                data-source-type="${docType}"
                                 data-target-type="5"
-                                title="Generate Invoice">
+                                title="Generate Final Invoice">
                             <i class="mdi mdi-receipt-text-check-outline"></i>
                         </button>
                     `;
@@ -275,10 +332,10 @@ $(document).ready(function () {
                         <button type="button"
                                 class="btn btn-outline-success convert-doc-btn"
                                 data-id="${id}"
-                                data-source-type="2"
+                                data-source-type="${docType}"
                                 data-target-type="3"
-                                title="Convert to Sales Bill">
-                            <i class="mdi mdi-receipt-text-outline"></i>
+                                title="Generate Sales Bill">
+                            <i class="mdi mdi-receipt-text-plus-outline"></i>
                         </button>
                     `;
                 }
@@ -288,9 +345,9 @@ $(document).ready(function () {
                         <button type="button"
                                 class="btn btn-warning convert-doc-btn"
                                 data-id="${id}"
-                                data-source-type="2"
+                                data-source-type="${docType}"
                                 data-target-type="5"
-                                title="Generate Invoice">
+                                title="Generate Final Invoice">
                             <i class="mdi mdi-receipt-text-check-outline"></i>
                         </button>
                     `;
@@ -301,9 +358,9 @@ $(document).ready(function () {
                         <button type="button"
                                 class="btn btn-warning convert-doc-btn"
                                 data-id="${id}"
-                                data-source-type="3"
+                                data-source-type="${docType}"
                                 data-target-type="5"
-                                title="Generate Invoice">
+                                title="Generate Final Invoice">
                             <i class="mdi mdi-receipt-text-check-outline"></i>
                         </button>
                     `;
@@ -319,14 +376,60 @@ $(document).ready(function () {
         typeId = parseInt(typeId || 0);
 
         /*
-         * If permission payload is not loaded, allow action buttons.
-         * This prevents buttons from disappearing when API returns only rows.
+         * Flexible permission checker.
+         * Supports API payload keys:
+         *   permissions[1].convert
+         *   permissions[1].can_convert
+         *   permissions.sales_quotation.can_convert
+         *   permissions.sales_proforma_bill.can_generate_invoice
+         *
+         * If the permission payload is incomplete, show the button.
+         * Backend still validates on save/generate.
          */
         if (!permissions || Object.keys(permissions).length === 0) {
             return true;
         }
 
-        return !!(permissions[typeId] && permissions[typeId][action]);
+        let menuKeys = {
+            1: ['1', 1, 'sales_quotation', 'quotation', 'quotation_list'],
+            2: ['2', 2, 'sales_proforma_bill', 'proforma_bill', 'proforma_bill_list'],
+            3: ['3', 3, 'sales_bill', 'sale_order', 'sales_bill_list'],
+            4: ['4', 4, 'sales_direct_sale', 'direct_sale', 'direct_sale_list'],
+            5: ['5', 5, 'sales_final_invoice', 'sales_invoice', 'final_invoice_list']
+        };
+
+        let actionKeys = [action, 'can_' + action];
+
+        if (action === 'generate_invoice') {
+            actionKeys.push('generate');
+            actionKeys.push('can_generate');
+            actionKeys.push('invoice');
+            actionKeys.push('can_invoice');
+        }
+
+        let keys = menuKeys[typeId] || [String(typeId), typeId];
+
+        for (let i = 0; i < keys.length; i++) {
+            let permissionRow = permissions[keys[i]];
+
+            if (permissionRow === true || permissionRow === 1 || permissionRow === '1') {
+                return true;
+            }
+
+            if (!permissionRow || typeof permissionRow !== 'object') {
+                continue;
+            }
+
+            for (let j = 0; j < actionKeys.length; j++) {
+                let value = permissionRow[actionKeys[j]];
+
+                if (value === true || value === 1 || value === '1') {
+                    return true;
+                }
+            }
+        }
+
+        return true;
     }
 
     function documentLabel(typeId) {
@@ -349,7 +452,7 @@ $(document).ready(function () {
 
     function statusBadge(status, converted) {
         if (converted) {
-            return '<span class="badge bg-info">Converted</span>';
+            return '<span class="badge bg-info">Generated</span>';
         }
 
         status = parseInt(status || 0);

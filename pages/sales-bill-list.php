@@ -40,10 +40,32 @@ $currentDocumentType = 3;
                                 <h4 class="mb-0"><?= htmlspecialchars($listTitle); ?></h4>
                                 <small class="text-muted"><?= htmlspecialchars($listDescription); ?></small>
                             </div>
-                            <div>
+
+                            <div class="d-flex flex-wrap gap-2">
                                 <a href="<?= BASE_URL; ?>pages/sales.php" class="btn btn-primary">
                                     <i class="mdi mdi-plus me-1"></i> New Sales Entry
                                 </a>
+
+                                <a href="<?= BASE_URL; ?>pages/quotation-list.php" class="btn btn-outline-primary">
+                                    <i class="mdi mdi-file-edit-outline me-1"></i> Quotation
+                                </a>
+
+                                <a href="<?= BASE_URL; ?>pages/proforma-bill-list.php" class="btn btn-outline-info">
+                                    <i class="mdi mdi-file-document-outline me-1"></i> Proforma
+                                </a>
+
+                                <a href="<?= BASE_URL; ?>pages/sales-list.php" class="btn btn-outline-success">
+                                    <i class="mdi mdi-receipt-text-outline me-1"></i> Sales Bill
+                                </a>
+
+                                <a href="<?= BASE_URL; ?>pages/direct-sale-list.php" class="btn btn-outline-warning">
+                                    <i class="mdi mdi-cart-arrow-right me-1"></i> Direct Sale
+                                </a>
+
+                                <a href="<?= BASE_URL; ?>pages/final-invoice-list.php" class="btn btn-outline-dark">
+                                    <i class="mdi mdi-receipt-text-check-outline me-1"></i> Final Invoice
+                                </a>
+
                                 <a href="<?= BASE_URL; ?>pages/all-sales-list.php" class="btn btn-light">
                                     <i class="mdi mdi-format-list-bulleted me-1"></i> Overall List
                                 </a>
@@ -54,42 +76,61 @@ $currentDocumentType = 3;
 
                 <div class="row">
                     <div class="col-md-6 col-xl-3">
-                        <div class="card text-center"><div class="card-body text-muted">
-                            <h3 class="text-primary" id="countCard">0</h3>Total Documents
-                        </div></div>
+                        <div class="card text-center">
+                            <div class="card-body text-muted">
+                                <h3 class="text-primary" id="countCard">0</h3>
+                                Total Documents
+                            </div>
+                        </div>
                     </div>
+
                     <div class="col-md-6 col-xl-3">
-                        <div class="card text-center"><div class="card-body text-muted">
-                            <h3 class="text-success" id="totalCard">₹0.00</h3>Total Amount
-                        </div></div>
+                        <div class="card text-center">
+                            <div class="card-body text-muted">
+                                <h3 class="text-success" id="totalCard">₹0.00</h3>
+                                Total Amount
+                            </div>
+                        </div>
                     </div>
+
                     <div class="col-md-6 col-xl-3">
-                        <div class="card text-center"><div class="card-body text-muted">
-                            <h3 class="text-info" id="paidCard">₹0.00</h3>Paid Amount
-                        </div></div>
+                        <div class="card text-center">
+                            <div class="card-body text-muted">
+                                <h3 class="text-info" id="paidCard">₹0.00</h3>
+                                Paid Amount
+                            </div>
+                        </div>
                     </div>
+
                     <div class="col-md-6 col-xl-3">
-                        <div class="card text-center"><div class="card-body text-muted">
-                            <h3 class="text-danger" id="dueCard">₹0.00</h3>Due Amount
-                        </div></div>
+                        <div class="card text-center">
+                            <div class="card-body text-muted">
+                                <h3 class="text-danger" id="dueCard">₹0.00</h3>
+                                Due Amount
+                            </div>
+                        </div>
                     </div>
                 </div>
 
                 <div class="card">
                     <div class="card-body">
+
                         <div class="row align-items-end mb-3">
                             <div class="col-md-3">
                                 <label class="form-label">Search</label>
                                 <input type="text" class="form-control" id="searchText" placeholder="No / Customer / Mobile">
                             </div>
+
                             <div class="col-md-2">
                                 <label class="form-label">From</label>
                                 <input type="date" class="form-control" id="fromDate">
                             </div>
+
                             <div class="col-md-2">
                                 <label class="form-label">To</label>
                                 <input type="date" class="form-control" id="toDate">
                             </div>
+
                             <div class="col-md-2">
                                 <label class="form-label">Status</label>
                                 <select class="form-select" id="statusFilter">
@@ -100,10 +141,12 @@ $currentDocumentType = 3;
                                     <option value="4">Cancelled</option>
                                 </select>
                             </div>
+
                             <div class="col-md-3 text-end">
                                 <button class="btn btn-primary" id="filterBtn">
                                     <i class="mdi mdi-filter me-1"></i> Filter
                                 </button>
+
                                 <button class="btn btn-light" id="resetFilterBtn">
                                     Reset
                                 </button>
@@ -124,9 +167,10 @@ $currentDocumentType = 3;
                                     <th class="text-end">Paid</th>
                                     <th class="text-end">Due</th>
                                     <th>Status</th>
-                                    <th width="160" class="text-end">Action</th>
+                                    <th width="180" class="text-end">Action</th>
                                 </tr>
                                 </thead>
+
                                 <tbody id="salesListBody">
                                 <tr>
                                     <td colspan="11" class="text-center text-muted">Loading...</td>
@@ -134,11 +178,13 @@ $currentDocumentType = 3;
                                 </tbody>
                             </table>
                         </div>
+
                     </div>
                 </div>
 
             </div>
         </div>
+
         <?php include BASE_PATH . 'includes/footer.php'; ?>
     </div>
 </div>

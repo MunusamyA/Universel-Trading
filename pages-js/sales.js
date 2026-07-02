@@ -255,13 +255,13 @@ $(document).ready(function () {
         };
 
         renderDocumentTypeDropdown(targetDocumentType);
-        applyPayloadToScreen(payload);
+        applyPayloadToScreen(payload, false);
 
         if (mode === 'convert') {
             $('#saleId').val('0');
             $('#documentType').val(String(targetDocumentType)).prop('disabled', true);
-            $('#documentModeText').text('Convert mode: generating ' + documentLabel(targetDocumentType));
-            $('#saveSaleBtn').html('<i class="mdi mdi-receipt-cutoff me-1"></i> Generate ' + documentLabel(targetDocumentType));
+            $('#documentModeText').text('Generate mode: ' + documentLabel(targetDocumentType));
+            $('#saveSaleBtn').html('<i class="mdi mdi-receipt-text-check-outline me-1"></i> Generate ' + documentLabel(targetDocumentType));
         } else {
             $('#documentType').prop('disabled', true);
             $('#documentModeText').text('Edit mode: document type locked');
@@ -281,6 +281,17 @@ $(document).ready(function () {
         currentSale = currentSale || {};
 
         /*
+         * In convert mode, save button already generates the selected target document.
+         * So hide any extra convert/generate button pointing to the same target type.
+         * Example:
+         * mode=convert&source_type=1&target_type=2
+         * Save button = Generate Proforma Bill
+         * Hide extra Generate Proforma Bill button.
+         */
+        let currentTargetType = parseInt(config.target_type || 0);
+        let isConvertMode = (mode === 'convert');
+
+        /*
          * In convert mode, the form is a new unsaved target document,
          * so #saleId is intentionally 0.
          * For bottom buttons like Print / Generate Invoice / Convert,
@@ -298,7 +309,7 @@ $(document).ready(function () {
 
         if (mode === 'convert') {
             $('#saveSaleBtn').html(
-                '<i class="mdi mdi-receipt-cutoff me-1"></i> Generate ' +
+                '<i class="mdi mdi-receipt-text-check-outline me-1"></i> Generate ' +
                 documentLabel(parseInt(config.target_type || docType))
             );
         } else if (saleId <= 0) {
@@ -312,11 +323,18 @@ $(document).ready(function () {
             return;
         }
 
-        let converted = parseInt(currentSale.conversion_status || 0) === 1 ||
-            parseInt(currentSale.converted_to_sale_id || 0) > 0;
+        /*
+         * Same-row generate flow:
+         * conversion_status = 1 only means this row was generated from another type.
+         * It should NOT hide next generate buttons.
+         * Hide buttons only if converted_to_sale_id points to another different row.
+         */
+        let currentRowId = parseInt(currentSale.id || actionSaleId || 0);
+        let convertedToSaleId = parseInt(currentSale.converted_to_sale_id || 0);
+        let converted = convertedToSaleId > 0 && convertedToSaleId !== currentRowId;
 
         if (converted && mode !== 'convert') {
-            $('#documentModeText').text('Already converted');
+            $('#documentModeText').text('Already generated to another document');
         }
 
         if (docPermission(actionDocType, 'print')) {
@@ -330,46 +348,46 @@ $(document).ready(function () {
         }
 
         if (actionDocType === 1) {
-            if (docPermission(1, 'convert') && docPermission(2, 'add')) {
+            if ((!isConvertMode || currentTargetType !== 2) && docPermission(1, 'convert') && docPermission(2, 'add')) {
                 $('#convertProformaBtn')
                     .removeClass('d-none')
                     .attr('data-source-id', actionSaleId)
-                    .attr('data-source-type', 1);
+                    .attr('data-source-type', actionDocType);
             }
 
-            if (docPermission(1, 'convert') && docPermission(3, 'add')) {
+            if ((!isConvertMode || currentTargetType !== 3) && docPermission(1, 'convert') && docPermission(3, 'add')) {
                 $('#convertSalesBillBtn')
                     .removeClass('d-none')
                     .attr('data-source-id', actionSaleId)
-                    .attr('data-source-type', 1);
+                    .attr('data-source-type', actionDocType);
             }
 
-            if (docPermission(1, 'generate_invoice') && docPermission(5, 'add')) {
+            if ((!isConvertMode || currentTargetType !== 5) && docPermission(1, 'generate_invoice') && docPermission(5, 'add')) {
                 $('#generateInvoiceBtn')
                     .removeClass('d-none')
                     .attr('data-source-id', actionSaleId)
-                    .attr('data-source-type', 1);
+                    .attr('data-source-type', actionDocType);
             }
         } else if (actionDocType === 2) {
-            if (docPermission(2, 'convert') && docPermission(3, 'add')) {
+            if ((!isConvertMode || currentTargetType !== 3) && docPermission(2, 'convert') && docPermission(3, 'add')) {
                 $('#convertSalesBillBtn')
                     .removeClass('d-none')
                     .attr('data-source-id', actionSaleId)
-                    .attr('data-source-type', 2);
+                    .attr('data-source-type', actionDocType);
             }
 
-            if (docPermission(2, 'generate_invoice') && docPermission(5, 'add')) {
+            if ((!isConvertMode || currentTargetType !== 5) && docPermission(2, 'generate_invoice') && docPermission(5, 'add')) {
                 $('#generateInvoiceBtn')
                     .removeClass('d-none')
                     .attr('data-source-id', actionSaleId)
-                    .attr('data-source-type', 2);
+                    .attr('data-source-type', actionDocType);
             }
         } else if (actionDocType === 3) {
-            if (docPermission(3, 'generate_invoice') && docPermission(5, 'add')) {
+            if ((!isConvertMode || currentTargetType !== 5) && docPermission(3, 'generate_invoice') && docPermission(5, 'add')) {
                 $('#generateInvoiceBtn')
                     .removeClass('d-none')
                     .attr('data-source-id', actionSaleId)
-                    .attr('data-source-type', 3);
+                    .attr('data-source-type', actionDocType);
             }
         }
     }
@@ -462,14 +480,16 @@ $(document).ready(function () {
             }
 
             if (saleId <= 0) {
-                showAppToast('warning', 'Please save the document before conversion.');
+                showAppToast('warning', 'Please save the document before generate.');
                 return;
             }
 
-            window.location.href = window.BASE_URL +
-                'pages/sales.php?mode=convert&source_id=' + saleId +
-                '&source_type=' + sourceType +
-                '&target_type=' + targetType;
+            /*
+             * Correct behavior:
+             * On edit page, Generate must save current changes and generate in one click.
+             * No separate convert page needed.
+             */
+            generateFromCurrentEdit(saleId, sourceType, targetType);
         });
 
         $('#printSaleBtn').on('click', function () {
@@ -1563,6 +1583,120 @@ function addOrUpdateSalesItem() {
         $('#summaryDue').text(formatCurrency(dueAmount));
     }
 
+    function validateSaleBeforeSubmit() {
+        if (parseInt($('#customerId').val() || 0) <= 0) {
+            if ($.trim($('#customerSearch').val()) === '') {
+                $('#customerSearch').val('Walk-in Customer');
+            }
+
+            if ($.trim($('#deliveryAddress').val()) === '') {
+                showAppToast('warning', 'Please enter delivery address for walk-in customer.');
+                $('#deliveryAddress').focus();
+                return false;
+            }
+        } else if ($.trim($('#deliveryAddress').val()) === '') {
+            showAppToast('warning', 'Delivery address is required.');
+            $('#deliveryAddress').focus();
+            return false;
+        }
+
+        if (!salesItems || salesItems.length === 0) {
+            showAppToast('warning', 'Please add at least one product.');
+            return false;
+        }
+
+        let invalidQty = salesItems.some(p => parseFloat(p.qty || 0) <= 0);
+        if (invalidQty) {
+            showAppToast('warning', 'Product quantity must be greater than zero.');
+            return false;
+        }
+
+        syncPaymentsFromDom();
+
+        let invalidPayment = salesPayments.some(p => parseInt(p.checked || 0) === 1 && parseFloat(p.payment_amount || 0) <= 0);
+        if (invalidPayment) {
+            showAppToast('warning', 'Please enter amount for selected payment mode.');
+            return false;
+        }
+
+        return true;
+    }
+
+    function generateFromCurrentEdit(sourceSaleId, sourceType, targetType) {
+        sourceSaleId = parseInt(sourceSaleId || 0);
+        sourceType = parseInt(sourceType || 0);
+        targetType = parseInt(targetType || 0);
+
+        if (sourceSaleId <= 0 || sourceType <= 0 || targetType <= 0) {
+            showAppToast('warning', 'Invalid generate request.');
+            return;
+        }
+
+        if (sourceType === targetType) {
+            showAppToast('warning', 'This document is already in selected type.');
+            return;
+        }
+
+        if (!validateSaleBeforeSubmit()) {
+            return;
+        }
+
+        let payload = collectPayload();
+
+        /*
+         * Important:
+         * Generate should update same sales.id using current screen values.
+         * Example:
+         * pages/sales.php?id=15&mode=edit
+         * User changes item/rate/customer and clicks Generate Final Invoice.
+         * This payload updates id=15 and changes document_type to 5.
+         */
+        payload.id = sourceSaleId;
+        payload.mode = 'convert';
+        payload.source_id = sourceSaleId;
+        payload.source_type = sourceType;
+        payload.target_type = targetType;
+        payload.document_type = targetType;
+
+        setButtonLoading('saveSaleBtn', 'Generating...');
+
+        $.ajax({
+            url: window.BASE_URL + 'api/sales.php',
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                action: 'save_sale',
+                csrf_token: $('input[name="csrf_token"]').first().val(),
+                payload: JSON.stringify(payload)
+            },
+            success: function (response) {
+                if (response.status === true) {
+                    showAppToast('success', response.message || 'Document generated successfully.');
+
+                    let savedId = response.data && response.data.id ? parseInt(response.data.id) : sourceSaleId;
+
+                    clearSalesSessionData();
+
+                    /*
+                     * After generate, automatically reload edit page.
+                     * Final Invoice can be updated after reload.
+                     */
+                    setTimeout(function () {
+                        window.location.href = window.BASE_URL + 'pages/sales.php?id=' + savedId + '&mode=edit';
+                    }, 600);
+                } else {
+                    handleApiError(response);
+                    resetButtonLoading('saveSaleBtn', $('#saveSaleBtn').html());
+                }
+            },
+            error: function (xhr) {
+                console.log(xhr.responseText);
+                showAppToast('error', 'Server error. Please try again.');
+                resetButtonLoading('saveSaleBtn', $('#saveSaleBtn').html());
+            }
+        });
+    }
+
     function saveSale() {
         if (parseInt($('#customerId').val() || 0) <= 0) {
             if ($.trim($('#customerSearch').val()) === '') {
@@ -1625,7 +1759,28 @@ function addOrUpdateSalesItem() {
 
                     // Clear only current sales draft/session items after save/generate/final invoice.
                     // Hold bills are stored in HOLD_KEY and are not removed here.
-                    clearDraftStorage();
+                    clearSalesSessionData();
+
+                    let payloadMode = payload.mode || getSalesPageConfig().mode || 'new';
+                    let savedDocType = response.data && response.data.sale
+                        ? parseInt(response.data.sale.document_type || 0)
+                        : parseInt(payload.document_type || 0);
+
+                    /*
+                     * After generate, reload the same document in edit mode.
+                     * This allows:
+                     * - Proforma -> continue Generate Sales Bill
+                     * - Sales Bill -> continue Generate Final Invoice
+                     * - Final Invoice -> Update / Print / Payment only
+                     */
+                    if (savedId > 0 && (payloadMode === 'convert' || parseInt(payload.id || 0) > 0 || savedDocType === 5)) {
+                        $('#documentModeText').text('Saved: ' + (response.data.sales_no || ''));
+                        setTimeout(function () {
+                            window.location.href = window.BASE_URL + 'pages/sales.php?id=' + savedId + '&mode=edit';
+                        }, 600);
+                        return;
+                    }
+
                     clearCurrentScreen();
                     renderSalesActionButtons({});
 
@@ -1781,6 +1936,18 @@ function addOrUpdateSalesItem() {
     }
 
     function saveDraftToStorage() {
+        let config = getSalesPageConfig();
+        let mode = config.mode || 'new';
+        let currentSaleId = parseInt($('#saleId').val() || 0);
+
+        /*
+         * Do not store edit / generate pages as draft.
+         * This prevents old session data from loading again after update/refresh.
+         */
+        if (mode === 'edit' || mode === 'convert' || currentSaleId > 0) {
+            return;
+        }
+
         localStorage.setItem(DRAFT_KEY, JSON.stringify(collectPayload()));
     }
 
@@ -1792,13 +1959,14 @@ function addOrUpdateSalesItem() {
 
         try {
             let draft = JSON.parse(raw);
-            applyPayloadToScreen(draft);
+            applyPayloadToScreen(draft, false);
         } catch (e) {
             clearDraftStorage();
         }
     }
 
-    function applyPayloadToScreen(payload) {
+    function applyPayloadToScreen(payload, allowDraftSave) {
+        allowDraftSave = (allowDraftSave !== false);
         selectedCustomer = payload.customer_object || null;
         $('#saleId').val(payload.id || 0);
         $('#customerId').val(payload.customer_id || '');
@@ -1827,7 +1995,10 @@ function addOrUpdateSalesItem() {
         renderPayments();
         calculateSummary();
         renderSalesActionButtons();
-        saveDraftToStorage();
+
+        if (allowDraftSave === true) {
+            saveDraftToStorage();
+        }
     }
 
     function clearCurrentScreen() {
@@ -1862,8 +2033,61 @@ function addOrUpdateSalesItem() {
         calculateSummary();
     }
 
-    function clearDraftStorage() {
+    function clearSalesSessionData() {
+        /*
+         * Clear every temporary sales draft/session data after save/update/generate.
+         * HOLD_KEY is preserved because hold bills are separate.
+         */
+        let protectedKeys = [HOLD_KEY];
+
+        function shouldRemoveSalesKey(key) {
+            if (!key || protectedKeys.indexOf(key) !== -1) {
+                return false;
+            }
+
+            let k = String(key).toLowerCase();
+
+            return (
+                k.indexOf('sales') !== -1 ||
+                k.indexOf('sale_') !== -1 ||
+                k.indexOf('universal_erp_sales') !== -1 ||
+                k.indexOf('draft') !== -1
+            ) && (
+                k.indexOf('draft') !== -1 ||
+                k.indexOf('temp') !== -1 ||
+                k.indexOf('session') !== -1 ||
+                k.indexOf('current') !== -1 ||
+                k.indexOf('selected') !== -1
+            );
+        }
+
         localStorage.removeItem(DRAFT_KEY);
+        sessionStorage.removeItem(DRAFT_KEY);
+
+        try {
+            Object.keys(localStorage).forEach(function (key) {
+                if (shouldRemoveSalesKey(key)) {
+                    localStorage.removeItem(key);
+                }
+            });
+        } catch (e) {}
+
+        try {
+            Object.keys(sessionStorage).forEach(function (key) {
+                if (shouldRemoveSalesKey(key)) {
+                    sessionStorage.removeItem(key);
+                }
+            });
+        } catch (e) {}
+
+        selectedCustomer = null;
+        selectedProduct = null;
+        selectedBatches = [];
+        editingProductId = null;
+    }
+
+    function clearDraftStorage() {
+        clearSalesSessionData();
     }
 
 

@@ -1681,17 +1681,72 @@ function saveSale(PDO $pdo)
     }
 
     if ($isConvertMode) {
-        if ($sourceSaleId <= 0 || $sourceType <= 0 || $targetType <= 0) {
-            jsonResponse(false, 'Invalid conversion request.');
+        /*
+         * Robust generate/convert request handling.
+         *
+         * Front-end may sometimes send source_type as old source_document_type
+         * or may miss source_type/target_type after cache/refresh.
+         *
+         * Source of truth is always current sales.document_type in DB.
+         */
+        if ($sourceSaleId <= 0 && $saleId > 0) {
+            $sourceSaleId = $saleId;
         }
 
-        // IMPORTANT:
-        // Convert / Generate Final Invoice must UPDATE the same sales row.
-        // Do not insert duplicate sales row.
+        if ($sourceSaleId <= 0) {
+            jsonResponse(false, 'Invalid conversion request: source document missing.');
+        }
+
+        $sourceStmt = $pdo->prepare("
+            SELECT id, document_type, converted_to_sale_id, converted_to_document_type, conversion_status
+            FROM sales
+            WHERE id = :id
+              AND business_id = :business_id
+              AND branch_id = :branch_id
+              AND status != 3
+            LIMIT 1
+        ");
+        $sourceStmt->execute([
+            ':id' => $sourceSaleId,
+            ':business_id' => $scope['business_id'],
+            ':branch_id' => $scope['branch_id']
+        ]);
+        $sourceRowForGenerate = $sourceStmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$sourceRowForGenerate) {
+            jsonResponse(false, 'Source document not found.');
+        }
+
+        $realSourceType = (int)($sourceRowForGenerate['document_type'] ?? 0);
+
+        if ($realSourceType <= 0 || !isset(salesDocumentTypes()[$realSourceType])) {
+            jsonResponse(false, 'Invalid source document type.');
+        }
+
+        /*
+         * Force source_type to current DB document_type.
+         * This prevents:
+         * "Source document type mismatch. Please reload and try again."
+         */
+        $sourceType = $realSourceType;
+
+        if ($targetType <= 0) {
+            $targetType = $documentType;
+        }
+
+        if ($targetType <= 0 || !isset(salesDocumentTypes()[$targetType])) {
+            jsonResponse(false, 'Invalid conversion request: target document missing.');
+        }
+
+        if ($targetType === $sourceType) {
+            jsonResponse(false, 'This document is already in selected document type.');
+        }
+
+        // Convert / Generate must UPDATE the same sales row.
         $documentType = $targetType;
         $saleId = $sourceSaleId;
 
-        requireSalesDocumentPermission($sourceType, 'convert', 'You do not have permission to convert the source document.');
+        requireSalesDocumentPermission($sourceType, 'convert', 'You do not have permission to generate from the source document.');
         requireSalesDocumentPermission($targetType, 'add', 'You do not have permission to generate the target document.');
 
         if ($targetType === 5) {
@@ -1755,12 +1810,16 @@ function saveSale(PDO $pdo)
             $oldDocumentType = (int)$oldSale['document_type'];
 
             if ($isConvertMode) {
+                /*
+                 * Do not fail if frontend sent stale source_type.
+                 * Current DB document_type is the correct source type.
+                 */
                 if ($oldDocumentType !== $sourceType) {
-                    throw new Exception('Source document type mismatch. Please reload and try again.');
+                    $sourceType = $oldDocumentType;
                 }
 
                 if ((int)($oldSale['conversion_status'] ?? 0) === 1 && (int)($oldSale['converted_to_sale_id'] ?? 0) > 0) {
-                    throw new Exception('This document is already converted.');
+                    throw new Exception('This document is already generated.');
                 }
             } else {
                 // Existing normal edit keeps document type locked.
@@ -2035,6 +2094,7 @@ function saveSale(PDO $pdo)
         jsonOk($isConvertMode ? 'Document updated successfully. No duplicate created.' : 'Sale saved successfully.', [
             'id' => $saleId,
             'sales_no' => $salesNo,
+            'document_type' => $documentType,
             'grand_total' => $grandTotal,
             'paid_amount' => round2($paidAmount),
             'due_amount' => $dueAmount,

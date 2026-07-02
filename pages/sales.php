@@ -461,13 +461,13 @@ $salesPageConfig = [
                                             <i class="mdi mdi-content-save me-1"></i> Save
                                         </button>
                                         <button type="button" class="btn btn-outline-primary d-none sales-convert-btn" data-target-type="2" id="convertProformaBtn">
-                                            <i class="mdi mdi-file-earmark-text me-1"></i> Convert to Proforma Bill
+                                            <i class="mdi mdi-file-document-plus-outline me-1"></i> Generate Proforma Bill
                                         </button>
                                         <button type="button" class="btn btn-outline-info d-none sales-convert-btn" data-target-type="3" id="convertSalesBillBtn">
-                                            <i class="mdi mdi-receipt me-1"></i> Convert to Sales Bill
+                                            <i class="mdi mdi-receipt-text-plus-outline me-1"></i> Generate Sales Bill
                                         </button>
                                         <button type="button" class="btn btn-warning d-none sales-convert-btn" data-target-type="5" id="generateInvoiceBtn">
-                                            <i class="mdi mdi-receipt-cutoff me-1"></i> Generate Final Invoice
+                                            <i class="mdi mdi-receipt-text-check-outline me-1"></i> Generate Final Invoice
                                         </button>
                                         <button type="button" class="btn btn-secondary d-none" id="printSaleBtn">
                                             <i class="mdi mdi-printer me-1"></i> Print
