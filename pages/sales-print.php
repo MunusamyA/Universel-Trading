@@ -237,6 +237,8 @@ if ((int)($sale['invoice_type'] ?? 1) === 2 && $documentType === 5) {
     $documentTitle = 'Invoice';
 }
 
+$fpdfPrintUrl = BASE_URL . 'api/sales-print.php?id=' . (int)$saleId . '&document_type=' . (int)$documentType;
+
 $itemsStmt = $pdo->prepare("
     SELECT *
     FROM sales_items
@@ -554,7 +556,7 @@ $page_title = $documentTitle . ' - ' . ($sale['sales_no'] ?? '');
 
 <div class="toolbar">
     <a href="<?= h(BASE_URL); ?>pages/sales.php?id=<?= (int)$saleId; ?>&mode=edit">Back</a>
-    <button type="button" onclick="window.print()">Print</button>
+    <button type="button" onclick="window.open('<?= h($fpdfPrintUrl); ?>', '_blank')">Print</button>
 </div>
 
 <div class="invoice">
@@ -770,8 +772,17 @@ $page_title = $documentTitle . ' - ' . ($sale['sales_no'] ?? '');
 <script>
     window.addEventListener('load', function () {
         const params = new URLSearchParams(window.location.search);
+
+        /*
+         * print=1 opens this preview page from Sales / Sales List.
+         * Do not browser-print this HTML page automatically.
+         * Print button above opens api/sales-print.php FPDF.
+         */
         if (params.get('print') === '1') {
-            window.print();
+            const printButton = document.querySelector('.toolbar button');
+            if (printButton) {
+                printButton.focus();
+            }
         }
     });
 </script>

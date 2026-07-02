@@ -120,7 +120,7 @@ $page_title = ($customerId > 0 ? 'Edit Customer' : 'Add Customer') . ' | Univers
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label">Status</label>
-                                    <select class="form-select" id="status" name="status">
+                                    <select class="form-select" id="status1" name="status">
                                         <option value="1">Active</option>
                                         <option value="2">Inactive</option>
                                     </select>

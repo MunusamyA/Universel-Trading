@@ -52,6 +52,7 @@ $page_title = ($purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase') . ' | Univers
                     <?= csrfTokenInput(); ?>
                     <input type="hidden" name="purchase_id" id="purchase_id" value="<?= $purchaseId; ?>">
                     <input type="hidden" name="items_json" id="items_json" value="">
+                    <input type="hidden" name="payment_splits_json" id="payment_splits_json" value="">
 
                     <div class="card">
                         <div class="card-header">
@@ -328,6 +329,34 @@ $page_title = ($purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase') . ' | Univers
                                         </div>
                                     </div>
 
+
+                                    <div class="border rounded p-3 mb-2" id="purchasePaymentSplitBox">
+                                        <div class="d-flex align-items-center justify-content-between mb-2">
+                                            <h6 class="mb-0">Payment Split</h6>
+                                            <button type="button" class="btn btn-sm btn-outline-primary" id="addPurchasePaymentSplitBtn">
+                                                <i class="mdi mdi-plus me-1"></i> Add Split
+                                            </button>
+                                        </div>
+                                        <div class="table-responsive">
+                                            <table class="table table-sm table-bordered mb-2">
+                                                <thead class="table-light">
+                                                <tr>
+                                                    <th>Payment Mode</th>
+                                                    <th>Amount</th>
+                                                    <th>Reference No</th>
+                                                    <th width="50">#</th>
+                                                </tr>
+                                                </thead>
+                                                <tbody id="purchasePaymentSplitsBody">
+                                                <tr><td colspan="4" class="text-center text-muted">Enter paid amount to add split.</td></tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                        <div class="text-end small">
+                                            Split Total: <strong>₹<span id="purchaseSplitTotal">0.00</span></strong>
+                                            <span class="ms-2">Balance: <strong class="text-danger">₹<span id="purchaseSplitBalance">0.00</span></strong></span>
+                                        </div>
+                                    </div>
                                     <div class="row mb-2">
                                         <label class="col-5 col-form-label">Due Amount</label>
                                         <div class="col-7">

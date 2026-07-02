@@ -1,0 +1,16 @@
+<?php
+require_once __DIR__ . '/../includes/config.php';
+require_once BASE_PATH . 'includes/db.php';
+require_once BASE_PATH . 'includes/security.php';
+require_once BASE_PATH . 'includes/auth.php';
+secureSessionStart(); requireLogin();
+$page_title='All Reports | Universal ERP'; $fromDate=date('Y-m-01'); $toDate=date('Y-m-d');
+?>
+<!doctype html><html lang="en"><head><?php include BASE_PATH.'includes/head.php'; ?>
+<style>.report-card{cursor:pointer;transition:.2s}.report-card:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.08)}.report-card.active{border:1px solid #556ee6;background:#f6f7ff}@media print{body *{visibility:hidden}#printArea,#printArea *{visibility:visible}#printArea{position:absolute;left:0;top:0;width:100%}.no-print{display:none!important}.card{border:0!important;box-shadow:none!important}}</style>
+</head><body data-sidebar="dark"><?php include BASE_PATH.'includes/pre-loader.php'; ?><div id="layout-wrapper"><?php include BASE_PATH.'includes/topbar.php'; ?><div class="vertical-menu"><div data-simplebar class="h-100"><?php include BASE_PATH.'includes/sidebar.php'; ?></div></div><div class="main-content"><div class="page-content"><div class="container-fluid">
+<div class="row no-print"><div class="col-12"><div class="page-title-box d-flex align-items-center justify-content-between"><h4 class="mb-0">All Reports</h4><button type="button" class="btn btn-outline-primary" onclick="window.print()"><i class="mdi mdi-printer me-1"></i> Print</button></div></div></div>
+<div class="card no-print"><div class="card-body"><div class="row align-items-end"><div class="col-md-2"><label class="form-label">From Date</label><input type="date" class="form-control" id="fromDate" value="<?= $fromDate; ?>"></div><div class="col-md-2"><label class="form-label">To Date</label><input type="date" class="form-control" id="toDate" value="<?= $toDate; ?>"></div><div class="col-md-5"><label class="form-label">Search</label><input type="text" class="form-control" id="reportSearch" placeholder="Bill No / Party / Product / Reference"></div><div class="col-md-3"><button type="button" class="btn btn-primary w-100" id="loadReportBtn"><i class="mdi mdi-filter me-1"></i> Load Report</button></div></div></div></div>
+<div class="row no-print" id="reportCards"></div>
+<div id="printArea"><div class="card"><div class="card-header bg-white"><div class="d-flex justify-content-between"><div><h5 class="mb-1" id="reportTitle">Select Report</h5><small class="text-muted" id="reportPeriod">-</small></div><div class="text-end"><strong id="recordCount">0 Records</strong></div></div></div><div class="card-body"><div id="summaryBox" class="row mb-3"></div><div class="table-responsive"><table class="table table-bordered table-sm table-centered mb-0"><thead class="table-light" id="reportHead"><tr><th>Select report</th></tr></thead><tbody id="reportBody"><tr><td class="text-center text-muted">No report selected.</td></tr></tbody><tfoot id="reportFoot"></tfoot></table></div></div></div></div>
+</div></div><?php include BASE_PATH.'includes/footer.php'; ?></div></div><?php include BASE_PATH.'includes/rightbar.php'; ?><?php include BASE_PATH.'includes/scripts.php'; ?><script>window.BASE_URL="<?= BASE_URL; ?>";</script><script src="<?= BASE_URL; ?>pages-js/all-reports.js?v=<?= time(); ?>"></script></body></html>

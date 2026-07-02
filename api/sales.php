@@ -1400,29 +1400,31 @@ function applyCustomerPaymentAllocation(PDO $pdo, array $scope, $paymentId, $cus
 
         $due = round2($sale['due_amount'] ?? 0);
         if ($remaining - $due > 0.01) {
-            throw new Exception('Payment amount cannot be greater than selected document due.');
+            throw new Exception('Payment amount cannot be greater than selected bill due.');
         }
 
         allocateToSale($pdo, $scope, $paymentId, $customerId, $salesId, $remaining);
         return;
     }
 
-    if ($paymentType === 3) {
+    if ($paymentType === 3 || $paymentType === 2) {
         $customer = getCustomerForPaymentUpdate($pdo, $scope, $customerId);
         $openingDue = round2($customer['opening_due'] ?? $customer['opening_outstanding'] ?? 0);
 
-        if ($remaining - $openingDue > 0.01) {
-            throw new Exception('Payment amount cannot be greater than opening balance due.');
+        if ($openingDue > 0 && $remaining > 0) {
+            $payOpening = min($openingDue, $remaining);
+            allocateToOpeningBalance($pdo, $scope, $paymentId, $customerId, $payOpening);
+            $remaining = round2($remaining - $payOpening);
         }
 
-        if ($remaining > 0) {
-            allocateToOpeningBalance($pdo, $scope, $paymentId, $customerId, $remaining);
+        if ($paymentType === 3) {
+            if ($remaining > 0.01) {
+                throw new Exception('Payment amount cannot be greater than opening balance due.');
+            }
+            return;
         }
-        return;
     }
 
-    // Overall payment rule:
-    // First adjust Direct Sale / Final Invoice documents, then reduce opening due with remaining amount.
     if ($paymentType === 2 && $remaining > 0) {
         $stmt = $pdo->prepare("
             SELECT id, due_amount
@@ -1431,7 +1433,6 @@ function applyCustomerPaymentAllocation(PDO $pdo, array $scope, $paymentId, $cus
             AND branch_id = :branch_id
             AND customer_id = :customer_id
             AND status IN (1,2)
-            AND document_type IN (4,5)
             AND due_amount > 0
             ORDER BY sales_date ASC, id ASC
             FOR UPDATE
@@ -1456,17 +1457,6 @@ function applyCustomerPaymentAllocation(PDO $pdo, array $scope, $paymentId, $cus
             $apply = min($due, $remaining);
             allocateToSale($pdo, $scope, $paymentId, $customerId, (int)$sale['id'], $apply);
             $remaining = round2($remaining - $apply);
-        }
-
-        if ($remaining > 0) {
-            $customer = getCustomerForPaymentUpdate($pdo, $scope, $customerId);
-            $openingDue = round2($customer['opening_due'] ?? $customer['opening_outstanding'] ?? 0);
-
-            if ($openingDue > 0) {
-                $payOpening = min($openingDue, $remaining);
-                allocateToOpeningBalance($pdo, $scope, $paymentId, $customerId, $payOpening);
-                $remaining = round2($remaining - $payOpening);
-            }
         }
 
         if ($remaining > 0.01) {

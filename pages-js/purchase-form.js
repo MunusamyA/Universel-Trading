@@ -6,11 +6,14 @@ $(document).ready(function () {
     let productList = [];
     let hsnList = [];
     let productMasters = { categories: [], sub_categories: [], hsn_codes: [] };
+    let paymentModes = [];
+    let purchasePaymentSplits = [];
 
     loadSuppliers();
     loadProducts();
     loadHsnCodes();
     loadProductMasters();
+    loadPurchasePaymentModes();
 
     if (purchaseId > 0) {
         loadPurchase(purchaseId);
@@ -129,7 +132,24 @@ $(document).ready(function () {
         }
     });
 
-    $('.calc-main').on('input change', calculateTotals);
+    $('.calc-main').on('input change', function () {
+        calculateTotals();
+        syncPurchaseSplitsWithPaidAmount();
+    });
+
+    $('#addPurchasePaymentSplitBtn').on('click', function () {
+        addPurchasePaymentSplit();
+    });
+
+    $(document).on('input change', '.purchase-payment-split-calc', function () {
+        updatePurchaseSplitFromRow($(this).closest('tr').data('index'));
+    });
+
+    $(document).on('click', '.remove-purchase-split-btn', function () {
+        let index = parseInt($(this).closest('tr').data('index'));
+        purchasePaymentSplits.splice(index, 1);
+        renderPurchasePaymentSplits();
+    });
 
     $('#bill_no').on('input change', function () {
         $('#batch_no').val(generateHeaderBatchNo());
@@ -187,6 +207,12 @@ $(document).ready(function () {
 
         $('#items_json').val(JSON.stringify(items));
 
+        if (!validatePurchasePaymentSplits()) {
+            return;
+        }
+
+        $('#payment_splits_json').val(JSON.stringify(purchasePaymentSplits));
+
         $('#savePurchaseBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Saving...');
 
         $.ajax({
@@ -214,6 +240,149 @@ $(document).ready(function () {
             }
         });
     });
+
+
+    function loadPurchasePaymentModes() {
+        $.ajax({
+            url: window.BASE_URL + 'api/purchases.php',
+            type: 'GET',
+            dataType: 'json',
+            data: { action: 'get_payment_modes' },
+            success: function (response) {
+                if (response.status === true) {
+                    paymentModes = response.data.payment_modes || [];
+                    renderPurchasePaymentSplits();
+                }
+            },
+            error: function (xhr) { console.log(xhr.responseText); }
+        });
+    }
+
+    function syncPurchaseSplitsWithPaidAmount() {
+        let paidAmount = round2(parseFloat($('#paid_amount').val() || 0));
+
+        if (paidAmount <= 0) {
+            purchasePaymentSplits = [];
+            renderPurchasePaymentSplits();
+            return;
+        }
+
+        if (purchasePaymentSplits.length === 0) {
+            purchasePaymentSplits.push({
+                payment_mode_id: paymentModes.length ? parseInt(paymentModes[0].id) : 0,
+                amount: paidAmount,
+                reference_no: ''
+            });
+        } else if (purchasePaymentSplits.length === 1) {
+            purchasePaymentSplits[0].amount = paidAmount;
+        }
+
+        renderPurchasePaymentSplits();
+    }
+
+    function addPurchasePaymentSplit() {
+        let paidAmount = round2(parseFloat($('#paid_amount').val() || 0));
+        if (paidAmount <= 0) return warn('Enter paid amount first.', '#paid_amount');
+
+        let balance = round2(paidAmount - getPurchaseSplitTotal());
+        if (balance < 0) balance = 0;
+
+        purchasePaymentSplits.push({
+            payment_mode_id: paymentModes.length ? parseInt(paymentModes[0].id) : 0,
+            amount: balance,
+            reference_no: ''
+        });
+
+        renderPurchasePaymentSplits();
+    }
+
+    function renderPurchasePaymentSplits() {
+        let paidAmount = round2(parseFloat($('#paid_amount').val() || 0));
+
+        if (paidAmount <= 0 || purchasePaymentSplits.length === 0) {
+            $('#purchasePaymentSplitsBody').html('<tr><td colspan="4" class="text-center text-muted">Enter paid amount to add split.</td></tr>');
+            $('#purchaseSplitTotal').text('0.00');
+            $('#purchaseSplitBalance').text('0.00');
+            return;
+        }
+
+        let html = '';
+        $.each(purchasePaymentSplits, function (index, split) {
+            html += `
+                <tr data-index="${index}">
+                    <td><select class="form-select form-select-sm purchase-payment-split-calc split-mode">${buildPaymentModeOptions(split.payment_mode_id)}</select></td>
+                    <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end purchase-payment-split-calc split-amount" value="${parseFloat(split.amount || 0).toFixed(2)}"></td>
+                    <td><input type="text" class="form-control form-control-sm purchase-payment-split-calc split-ref" value="${escapeHtml(split.reference_no || '')}"></td>
+                    <td class="text-center"><button type="button" class="btn btn-sm btn-outline-danger remove-purchase-split-btn"><i class="mdi mdi-delete"></i></button></td>
+                </tr>`;
+        });
+
+        $('#purchasePaymentSplitsBody').html(html);
+        renderPurchaseSplitTotals();
+    }
+
+    function buildPaymentModeOptions(selectedId) {
+        let html = '<option value="">Select</option>';
+        $.each(paymentModes || [], function (_, mode) {
+            let selected = parseInt(mode.id) === parseInt(selectedId || 0) ? 'selected' : '';
+            html += `<option value="${mode.id}" ${selected}>${escapeHtml(mode.mode_name || '')}</option>`;
+        });
+        return html;
+    }
+
+    function updatePurchaseSplitFromRow(index) {
+        index = parseInt(index || 0);
+        let row = $('#purchasePaymentSplitsBody tr[data-index="' + index + '"]');
+        if (!purchasePaymentSplits[index] || row.length === 0) return;
+
+        purchasePaymentSplits[index].payment_mode_id = parseInt(row.find('.split-mode').val() || 0);
+        purchasePaymentSplits[index].amount = round2(parseFloat(row.find('.split-amount').val() || 0));
+        purchasePaymentSplits[index].reference_no = row.find('.split-ref').val() || '';
+        renderPurchaseSplitTotals();
+    }
+
+    function getPurchaseSplitTotal() {
+        let total = 0;
+        $.each(purchasePaymentSplits, function (_, split) {
+            total += parseFloat(split.amount || 0);
+        });
+        return round2(total);
+    }
+
+    function renderPurchaseSplitTotals() {
+        let paidAmount = round2(parseFloat($('#paid_amount').val() || 0));
+        let splitTotal = getPurchaseSplitTotal();
+        let balance = round2(paidAmount - splitTotal);
+        $('#purchaseSplitTotal').text(splitTotal.toFixed(2));
+        $('#purchaseSplitBalance').text(balance.toFixed(2));
+    }
+
+    function validatePurchasePaymentSplits() {
+        let paidAmount = round2(parseFloat($('#paid_amount').val() || 0));
+        if (paidAmount <= 0) {
+            purchasePaymentSplits = [];
+            return true;
+        }
+
+        if (purchasePaymentSplits.length === 0) {
+            return warn('Payment split is required.', '#paid_amount');
+        }
+
+        for (let i = 0; i < purchasePaymentSplits.length; i++) {
+            if (parseInt(purchasePaymentSplits[i].payment_mode_id || 0) <= 0) {
+                return warn('Please select payment mode in split row ' + (i + 1), '#purchasePaymentSplitsBody');
+            }
+            if (parseFloat(purchasePaymentSplits[i].amount || 0) <= 0) {
+                return warn('Please enter split amount in row ' + (i + 1), '#purchasePaymentSplitsBody');
+            }
+        }
+
+        if (Math.abs(getPurchaseSplitTotal() - paidAmount) > 0.01) {
+            return warn('Payment split total must match paid amount.', '#paid_amount');
+        }
+
+        return true;
+    }
 
     function loadSuppliers(selectedId) {
         $.ajax({
@@ -1000,6 +1169,8 @@ $(document).ready(function () {
                     $('#discount_value').val(parseFloat(purchase.discount_value || 0).toFixed(2));
                     $('#round_off').val(parseFloat(purchase.round_off || 0).toFixed(2));
                     $('#paid_amount').val(parseFloat(purchase.paid_amount || 0).toFixed(2));
+                    purchasePaymentSplits = [];
+                    syncPurchaseSplitsWithPaidAmount();
                     $('#notes').val(purchase.notes || '');
 
                     items = [];

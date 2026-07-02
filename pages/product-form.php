@@ -76,7 +76,7 @@ $page_title = ($productId > 0 ? 'Edit Product' : 'Add Product') . ' | Universal 
 <div class="col-md-3"><label class="form-label">Initial Stock Qty</label><input type="number" step="0.0001" min="0" class="form-control" id="initial_stock" name="initial_stock" value="0.0000"><small class="text-muted">Opening stock / batch quantity</small></div>
 <div class="col-md-3 mt-3"><label class="form-label">Initial Stock Expiry Date</label><input type="date" class="form-control" id="initial_stock_expiry_date" name="initial_stock_expiry_date"></div>
 <div class="col-md-3 mt-3"><label class="form-label">Minimum Stock</label><input type="number" step="0.01" min="0" class="form-control" id="minimum_stock" name="minimum_stock" value="0.00"></div>
-<div class="col-md-3 mt-3"><label class="form-label">Status</label><select class="form-select" id="status" name="status"><option value="1">Active</option><option value="2">Inactive</option></select></div>
+<div class="col-md-3 mt-3"><label class="form-label">Status</label><select class="form-select" id="status1" name="status"><option value="1">Active</option><option value="2">Inactive</option></select></div>
 <input type="hidden" id="box_label" name="box_label" value="">
 <input type="hidden" id="default_pieces_per_box" name="default_pieces_per_box" value="1.0000">
 <input type="hidden" id="markup_type" name="markup_type" value="1"><input type="hidden" id="markup_value" name="markup_value" value="0.00">

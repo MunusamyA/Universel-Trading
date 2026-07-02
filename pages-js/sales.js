@@ -277,55 +277,99 @@ $(document).ready(function () {
         let docType = parseInt($('#documentType').val() || 0);
         let config = getSalesPageConfig();
         let mode = config.mode || 'new';
+
         currentSale = currentSale || {};
+
+        /*
+         * In convert mode, the form is a new unsaved target document,
+         * so #saleId is intentionally 0.
+         * For bottom buttons like Print / Generate Invoice / Convert,
+         * use the original source document id and source document type.
+         */
+        let actionSaleId = saleId;
+        let actionDocType = docType;
+
+        if (mode === 'convert') {
+            actionSaleId = parseInt(config.source_id || currentSale.id || 0);
+            actionDocType = parseInt(config.source_type || currentSale.document_type || docType || 0);
+        }
 
         $('.sales-convert-btn, #printSaleBtn').addClass('d-none');
 
         if (mode === 'convert') {
-            $('#saveSaleBtn').html('<i class="mdi mdi-receipt-cutoff me-1"></i> Generate ' + documentLabel(parseInt(config.target_type || docType)));
-            return;
-        }
-
-        if (saleId <= 0) {
+            $('#saveSaleBtn').html(
+                '<i class="mdi mdi-receipt-cutoff me-1"></i> Generate ' +
+                documentLabel(parseInt(config.target_type || docType))
+            );
+        } else if (saleId <= 0) {
             $('#saveSaleBtn').html('<i class="mdi mdi-content-save me-1"></i> Save');
             return;
+        } else {
+            $('#saveSaleBtn').html('<i class="mdi mdi-content-save me-1"></i> Update');
         }
 
-        $('#saveSaleBtn').html('<i class="mdi mdi-content-save me-1"></i> Update');
+        if (actionSaleId <= 0 || actionDocType <= 0) {
+            return;
+        }
 
-        let converted = parseInt(currentSale.conversion_status || 0) === 1 || parseInt(currentSale.converted_to_sale_id || 0) > 0;
-        if (converted) {
+        let converted = parseInt(currentSale.conversion_status || 0) === 1 ||
+            parseInt(currentSale.converted_to_sale_id || 0) > 0;
+
+        if (converted && mode !== 'convert') {
             $('#documentModeText').text('Already converted');
         }
 
-        if (docPermission(docType, 'print')) {
-            $('#printSaleBtn').removeClass('d-none');
+        if (docPermission(actionDocType, 'print')) {
+            $('#printSaleBtn')
+                .removeClass('d-none')
+                .attr('data-print-id', actionSaleId);
         }
 
         if (converted) {
             return;
         }
 
-        if (docType === 1) {
+        if (actionDocType === 1) {
             if (docPermission(1, 'convert') && docPermission(2, 'add')) {
-                $('#convertProformaBtn').removeClass('d-none');
+                $('#convertProformaBtn')
+                    .removeClass('d-none')
+                    .attr('data-source-id', actionSaleId)
+                    .attr('data-source-type', 1);
             }
+
             if (docPermission(1, 'convert') && docPermission(3, 'add')) {
-                $('#convertSalesBillBtn').removeClass('d-none');
+                $('#convertSalesBillBtn')
+                    .removeClass('d-none')
+                    .attr('data-source-id', actionSaleId)
+                    .attr('data-source-type', 1);
             }
+
             if (docPermission(1, 'generate_invoice') && docPermission(5, 'add')) {
-                $('#generateInvoiceBtn').removeClass('d-none');
+                $('#generateInvoiceBtn')
+                    .removeClass('d-none')
+                    .attr('data-source-id', actionSaleId)
+                    .attr('data-source-type', 1);
             }
-        } else if (docType === 2) {
+        } else if (actionDocType === 2) {
             if (docPermission(2, 'convert') && docPermission(3, 'add')) {
-                $('#convertSalesBillBtn').removeClass('d-none');
+                $('#convertSalesBillBtn')
+                    .removeClass('d-none')
+                    .attr('data-source-id', actionSaleId)
+                    .attr('data-source-type', 2);
             }
+
             if (docPermission(2, 'generate_invoice') && docPermission(5, 'add')) {
-                $('#generateInvoiceBtn').removeClass('d-none');
+                $('#generateInvoiceBtn')
+                    .removeClass('d-none')
+                    .attr('data-source-id', actionSaleId)
+                    .attr('data-source-type', 2);
             }
-        } else if (docType === 3) {
+        } else if (actionDocType === 3) {
             if (docPermission(3, 'generate_invoice') && docPermission(5, 'add')) {
-                $('#generateInvoiceBtn').removeClass('d-none');
+                $('#generateInvoiceBtn')
+                    .removeClass('d-none')
+                    .attr('data-source-id', actionSaleId)
+                    .attr('data-source-type', 3);
             }
         }
     }
@@ -399,25 +443,55 @@ $(document).ready(function () {
         $('#saveSaleBtn').on('click', saveSale);
 
         $(document).on('click', '.sales-convert-btn', function () {
-            let saleId = parseInt($('#saleId').val() || 0);
-            let sourceType = parseInt($('#documentType').val() || 0);
+            let config = getSalesPageConfig();
+            let mode = config.mode || 'new';
+
+            let saleId = parseInt($(this).attr('data-source-id') || $('#saleId').val() || 0);
+            let sourceType = parseInt($(this).attr('data-source-type') || $('#documentType').val() || 0);
             let targetType = parseInt($(this).data('target-type') || 0);
+
+            /*
+             * When current page is opened like:
+             * sales.php?mode=convert&source_id=6&source_type=2&target_type=3
+             * #saleId is 0 because the new target document is not saved yet.
+             * Use the original source id/type for conversion buttons.
+             */
+            if (mode === 'convert') {
+                saleId = parseInt(config.source_id || saleId || 0);
+                sourceType = parseInt(config.source_type || sourceType || 0);
+            }
 
             if (saleId <= 0) {
                 showAppToast('warning', 'Please save the document before conversion.');
                 return;
             }
 
-            window.location.href = window.BASE_URL + 'pages/sales.php?mode=convert&source_id=' + saleId + '&source_type=' + sourceType + '&target_type=' + targetType;
+            window.location.href = window.BASE_URL +
+                'pages/sales.php?mode=convert&source_id=' + saleId +
+                '&source_type=' + sourceType +
+                '&target_type=' + targetType;
         });
 
         $('#printSaleBtn').on('click', function () {
-            let saleId = parseInt($('#saleId').val() || 0);
+            let config = getSalesPageConfig();
+            let mode = config.mode || 'new';
+
+            let saleId = parseInt($(this).attr('data-print-id') || $('#saleId').val() || 0);
+
+            /*
+             * In convert mode print the original source document.
+             * The converted target document can be printed only after it is generated/saved.
+             */
+            if (mode === 'convert') {
+                saleId = parseInt(config.source_id || saleId || 0);
+            }
+
             if (saleId <= 0) {
                 showAppToast('warning', 'Please save before print.');
                 return;
             }
-            window.open(window.BASE_URL + 'pages/sales-print.php?id=' + saleId, '_blank');
+
+            window.open(window.BASE_URL + 'pages/sales-print.php?id=' + saleId + '&print=1', '_blank');
         });
 
         $('#addCustomerBtn').on('click', function () {

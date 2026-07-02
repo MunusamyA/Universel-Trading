@@ -208,7 +208,7 @@ function saveProduct(PDO $pdo) {
                 discount_type=:discount_type, discount_value=:discount_value, cost_price=:cost_price,
                 retail_markup_type=:retail_markup_type, retail_markup_value=:retail_markup_value, retail_price=:retail_price,
                 wholesale_markup_type=:wholesale_markup_type, wholesale_markup_value=:wholesale_markup_value, wholesale_price=:wholesale_price,
-                base_unit=:base_unit, box_label=:box_label, secondary_unit_label=:secondary_unit_label, secondary_unit_value=:secondary_unit_value,
+                base_unit=:base_unit, secondary_unit_value=:secondary_unit_value,
                 default_pieces_per_box=:default_pieces_per_box, markup_type=:markup_type, markup_value=:markup_value, markup_percentage=:markup_percentage,
                 minimum_stock=:minimum_stock, initial_stock=:initial_stock, initial_stock_expiry_date=:initial_stock_expiry_date, status=:status
                 WHERE id=:product_id AND business_id=:business_id AND branch_id=:branch_id";
@@ -217,13 +217,13 @@ function saveProduct(PDO $pdo) {
                 (business_id,branch_id,category_id,sub_category_id,hsn_id,product_code,product_name,product_image,
                 enter_mrp,gst_type,final_mrp,discount_type,discount_value,cost_price,
                 retail_markup_type,retail_markup_value,retail_price,wholesale_markup_type,wholesale_markup_value,wholesale_price,
-                base_unit,box_label,secondary_unit_label,secondary_unit_value,default_pieces_per_box,
+                base_unit,secondary_unit_value,default_pieces_per_box,
                 markup_type,markup_value,markup_percentage,minimum_stock,initial_stock,initial_stock_expiry_date,status,created_by)
                 VALUES
                 (:business_id,:branch_id,:category_id,:sub_category_id,:hsn_id,:product_code,:product_name,:product_image,
                 :enter_mrp,:gst_type,:final_mrp,:discount_type,:discount_value,:cost_price,
                 :retail_markup_type,:retail_markup_value,:retail_price,:wholesale_markup_type,:wholesale_markup_value,:wholesale_price,
-                :base_unit,:box_label,:secondary_unit_label,:secondary_unit_value,:default_pieces_per_box,
+                :base_unit,:secondary_unit_value,:default_pieces_per_box,
                 :markup_type,:markup_value,:markup_percentage,:minimum_stock,:initial_stock,:initial_stock_expiry_date,:status,:created_by)";
         }
 
@@ -233,7 +233,7 @@ function saveProduct(PDO $pdo) {
             ':enter_mrp'=>$enterMrp, ':gst_type'=>$gstType, ':final_mrp'=>$finalMrp, ':discount_type'=>$discountType, ':discount_value'=>$discountValue, ':cost_price'=>$costPrice,
             ':retail_markup_type'=>$retailMarkupType, ':retail_markup_value'=>$retailMarkupValue, ':retail_price'=>$retailPrice,
             ':wholesale_markup_type'=>$wholesaleMarkupType, ':wholesale_markup_value'=>$wholesaleMarkupValue, ':wholesale_price'=>$wholesalePrice,
-            ':base_unit'=>$baseUnit, ':box_label'=>$boxLabel, ':secondary_unit_label'=>$secondaryUnitLabel, ':secondary_unit_value'=>$secondaryUnitValue,
+            ':base_unit'=>$baseUnit, ':secondary_unit_value'=>$secondaryUnitValue,
             ':default_pieces_per_box'=>$defaultPiecesPerBox, ':markup_type'=>$markupType, ':markup_value'=>$markupValue, ':markup_percentage'=>$markupPercentage,
             ':minimum_stock'=>$minimumStock, ':initial_stock'=>$initialStock, ':initial_stock_expiry_date'=>$initialStockExpiryDate, ':status'=>$status
         ];
@@ -509,7 +509,6 @@ function saveInitialStockPurchase(
         'expiry_date' => $expiryDate ?: null,
         'unit_label' => $baseUnit,
         'base_unit' => $baseUnit,
-        'box_label' => null,
         'pieces_per_box' => 1,
         'box_qty' => 0,
         'loose_piece_qty' => $quantity,

@@ -30,6 +30,9 @@ switch ($action) {
     case 'get_suppliers':
         getSuppliers($pdo);
         break;
+    case 'get_payment_modes':
+        getPurchasePaymentModes($pdo);
+        break;
     case 'get_products':
         getProducts($pdo);
         break;
@@ -80,6 +83,30 @@ function getScope()
     ];
 }
 
+
+function getPurchasePaymentModes(PDO $pdo)
+{
+    requirePurchasePermission('view');
+    $scope = getScope();
+
+    $stmt = $pdo->prepare("
+        SELECT id, mode_name
+        FROM payment_modes
+        WHERE business_id = :business_id
+        AND branch_id = :branch_id
+        AND status = 1
+        ORDER BY id ASC
+    ");
+    $stmt->execute([
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id']
+    ]);
+
+    jsonResponse(true, 'Payment modes loaded.', [
+        'payment_modes' => $stmt->fetchAll(PDO::FETCH_ASSOC)
+    ]);
+}
+
 function listPurchases(PDO $pdo)
 {
     requirePurchasePermission('view');
@@ -112,8 +139,11 @@ function listPurchases(PDO $pdo)
     }
 
     if ($search !== '') {
-        $where .= " AND (p.bill_no LIKE :search OR p.batch_no LIKE :search OR s.supplier_name LIKE :search)";
-        $params[':search'] = '%' . $search . '%';
+        $where .= " AND (p.bill_no LIKE :search_bill OR p.batch_no LIKE :search_batch OR s.supplier_name LIKE :search_supplier)";
+        $searchValue = '%' . $search . '%';
+        $params[':search_bill'] = $searchValue;
+        $params[':search_batch'] = $searchValue;
+        $params[':search_supplier'] = $searchValue;
     }
 
     $stmt = $pdo->prepare("
@@ -227,6 +257,9 @@ function savePurchase(PDO $pdo)
     $roundOff = round((float)($_POST['round_off'] ?? 0), 2);
     $paidAmount = round((float)($_POST['paid_amount'] ?? 0), 2);
     $notes = cleanInput($_POST['notes'] ?? '');
+    $paymentSplitsJson = $_POST['payment_splits_json'] ?? '';
+    $paymentSplits = json_decode($paymentSplitsJson, true);
+    if (!is_array($paymentSplits)) { $paymentSplits = []; }
 
     $itemsJson = $_POST['items_json'] ?? '';
     $items = json_decode($itemsJson, true);
@@ -492,6 +525,8 @@ function savePurchase(PDO $pdo)
         $paidAmount = $grandTotal;
     }
 
+    $paymentSplits = normalizePurchaseFormSupplierPaymentSplits($pdo, $scope, $paymentSplits, $paidAmount);
+
     $dueAmount = round($grandTotal - $paidAmount, 2);
 
     if ($paidAmount <= 0) {
@@ -614,6 +649,12 @@ function savePurchase(PDO $pdo)
         }
 
         insertPurchaseItems($pdo, $scope, $purchaseId, $cleanItems);
+
+        cancelPurchaseFormSupplierPayment($pdo, $scope, $purchaseId);
+        if ($paidAmount > 0) {
+            createPurchaseFormSupplierPayment($pdo, $scope, $supplierId, $purchaseId, $purchaseDate, $paidAmount, $paymentSplits, 'Purchase form payment - Bill No: ' . $billNo);
+        }
+        recalcPurchaseSupplierPaidAmount($pdo, $scope, $purchaseId);
 
         $pdo->commit();
 
@@ -856,7 +897,6 @@ function getProducts(PDO $pdo)
             p.base_unit,
             p.box_label,
             p.default_pieces_per_box,
-            p.secondary_unit_label,
             p.secondary_unit_value,
             p.expire_days,
             p.gst_type,
@@ -1340,3 +1380,218 @@ function validateSupplier(PDO $pdo, array $scope, $supplierId)
         jsonResponse(false, 'Invalid supplier selected.');
     }
 }
+
+function normalizePurchaseFormSupplierPaymentSplits(PDO $pdo, array $scope, array $splits, $paidAmount)
+{
+    $paidAmount = round((float)$paidAmount, 2);
+    if ($paidAmount <= 0) return [];
+
+    $clean = [];
+    $total = 0;
+
+    foreach ($splits as $split) {
+        $modeId = (int)($split['payment_mode_id'] ?? 0);
+        $amount = round((float)($split['amount'] ?? 0), 2);
+        $referenceNo = cleanInput($split['reference_no'] ?? '');
+
+        if ($modeId <= 0 || $amount <= 0) continue;
+
+        $clean[] = [
+            'payment_mode_id' => $modeId,
+            'amount' => $amount,
+            'reference_no' => $referenceNo
+        ];
+        $total += $amount;
+    }
+
+    if (empty($clean)) {
+        $modeId = getFirstPurchasePaymentModeId($pdo, $scope);
+        return [[
+            'payment_mode_id' => $modeId,
+            'amount' => $paidAmount,
+            'reference_no' => ''
+        ]];
+    }
+
+    if (abs(round($total, 2) - $paidAmount) > 0.01) {
+        jsonResponse(false, 'Payment split total must match paid amount.');
+    }
+
+    return $clean;
+}
+
+function getFirstPurchasePaymentModeId(PDO $pdo, array $scope)
+{
+    $stmt = $pdo->prepare("
+        SELECT id
+        FROM payment_modes
+        WHERE business_id = :business_id
+        AND branch_id = :branch_id
+        AND status = 1
+        ORDER BY id ASC
+        LIMIT 1
+    ");
+    $stmt->execute([
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id']
+    ]);
+
+    $modeId = (int)$stmt->fetchColumn();
+    if ($modeId <= 0) jsonResponse(false, 'Please create payment mode.');
+    return $modeId;
+}
+
+function createPurchaseFormSupplierPayment(PDO $pdo, array $scope, $supplierId, $purchaseId, $paymentDate, $amount, array $splits, $notes)
+{
+    $paymentNo = generatePurchaseFormSupplierPaymentNo($pdo, $scope);
+
+    $stmt = $pdo->prepare("
+        INSERT INTO supplier_payments
+        (business_id, branch_id, supplier_id, payment_no, payment_date, payment_type, source_type, source_id, total_amount, notes, status, created_by, created_at)
+        VALUES
+        (:business_id, :branch_id, :supplier_id, :payment_no, :payment_date, 2, 'purchase_form', :source_id, :total_amount, :notes, 1, :created_by, NOW())
+    ");
+    $stmt->execute([
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id'],
+        ':supplier_id' => $supplierId,
+        ':payment_no' => $paymentNo,
+        ':payment_date' => $paymentDate ?: date('Y-m-d'),
+        ':source_id' => $purchaseId,
+        ':total_amount' => $amount,
+        ':notes' => $notes,
+        ':created_by' => currentUserId()
+    ]);
+
+    $paymentId = (int)$pdo->lastInsertId();
+
+    $splitStmt = $pdo->prepare("
+        INSERT INTO supplier_payment_splits
+        (business_id, branch_id, supplier_payment_id, payment_mode_id, amount, reference_no, status, created_at)
+        VALUES
+        (:business_id, :branch_id, :payment_id, :payment_mode_id, :amount, :reference_no, 1, NOW())
+    ");
+
+    foreach ($splits as $split) {
+        $splitStmt->execute([
+            ':business_id' => $scope['business_id'],
+            ':branch_id' => $scope['branch_id'],
+            ':payment_id' => $paymentId,
+            ':payment_mode_id' => $split['payment_mode_id'],
+            ':amount' => $split['amount'],
+            ':reference_no' => $split['reference_no']
+        ]);
+    }
+
+    $allocStmt = $pdo->prepare("
+        INSERT INTO supplier_payment_allocations
+        (business_id, branch_id, supplier_payment_id, supplier_id, allocation_type, purchase_id, amount, status, created_at)
+        VALUES
+        (:business_id, :branch_id, :payment_id, :supplier_id, 1, :purchase_id, :amount, 1, NOW())
+    ");
+    $allocStmt->execute([
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id'],
+        ':payment_id' => $paymentId,
+        ':supplier_id' => $supplierId,
+        ':purchase_id' => $purchaseId,
+        ':amount' => $amount
+    ]);
+}
+
+function cancelPurchaseFormSupplierPayment(PDO $pdo, array $scope, $purchaseId)
+{
+    $stmt = $pdo->prepare("
+        SELECT id FROM supplier_payments
+        WHERE business_id = :business_id AND branch_id = :branch_id
+        AND source_type = 'purchase_form' AND source_id = :purchase_id AND status = 1
+    ");
+    $stmt->execute([
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id'],
+        ':purchase_id' => $purchaseId
+    ]);
+
+    $paymentIds = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+    foreach ($paymentIds as $paymentId) {
+        $paymentId = (int)$paymentId;
+
+        $pdo->prepare("UPDATE supplier_payment_allocations SET status = 2 WHERE supplier_payment_id = :id")->execute([':id' => $paymentId]);
+        $pdo->prepare("UPDATE supplier_payment_splits SET status = 2 WHERE supplier_payment_id = :id")->execute([':id' => $paymentId]);
+        $pdo->prepare("UPDATE supplier_payments SET status = 2, updated_at = NOW() WHERE id = :id")->execute([':id' => $paymentId]);
+    }
+}
+
+function recalcPurchaseSupplierPaidAmount(PDO $pdo, array $scope, $purchaseId)
+{
+    $stmt = $pdo->prepare("
+        SELECT grand_total FROM purchases
+        WHERE id = :purchase_id AND business_id = :business_id AND branch_id = :branch_id
+        LIMIT 1
+    ");
+    $stmt->execute([
+        ':purchase_id' => $purchaseId,
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id']
+    ]);
+    $grandTotal = round((float)$stmt->fetchColumn(), 2);
+
+    $stmt = $pdo->prepare("
+        SELECT COALESCE(SUM(amount), 0)
+        FROM supplier_payment_allocations
+        WHERE business_id = :business_id AND branch_id = :branch_id
+        AND purchase_id = :purchase_id AND allocation_type = 1 AND status = 1
+    ");
+    $stmt->execute([
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id'],
+        ':purchase_id' => $purchaseId
+    ]);
+
+    $paidAmount = min($grandTotal, round((float)$stmt->fetchColumn(), 2));
+    $dueAmount = round($grandTotal - $paidAmount, 2);
+
+    if ($paidAmount <= 0) $paymentStatus = 1;
+    elseif ($dueAmount > 0) $paymentStatus = 2;
+    else $paymentStatus = 3;
+
+    $stmt = $pdo->prepare("
+        UPDATE purchases
+        SET paid_amount = :paid_amount, due_amount = :due_amount, payment_status = :payment_status
+        WHERE id = :purchase_id AND business_id = :business_id AND branch_id = :branch_id
+    ");
+    $stmt->execute([
+        ':paid_amount' => $paidAmount,
+        ':due_amount' => $dueAmount,
+        ':payment_status' => $paymentStatus,
+        ':purchase_id' => $purchaseId,
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id']
+    ]);
+}
+
+function generatePurchaseFormSupplierPaymentNo(PDO $pdo, array $scope)
+{
+    $prefix = 'SP-' . date('Ym') . '-';
+    $stmt = $pdo->prepare("
+        SELECT payment_no FROM supplier_payments
+        WHERE business_id = :business_id AND branch_id = :branch_id AND payment_no LIKE :prefix
+        ORDER BY id DESC LIMIT 1
+    ");
+    $stmt->execute([
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id'],
+        ':prefix' => $prefix . '%'
+    ]);
+
+    $lastNo = (string)$stmt->fetchColumn();
+    $next = 1;
+    if ($lastNo !== '') {
+        $parts = explode('-', $lastNo);
+        $next = ((int)end($parts)) + 1;
+    }
+
+    return $prefix . str_pad((string)$next, 4, '0', STR_PAD_LEFT);
+}
+

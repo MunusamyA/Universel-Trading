@@ -269,7 +269,7 @@ $page_title = 'Suppliers | Universal ERP';
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <label class="form-label" for="status">Status</label>
-                                <select class="form-select" id="status" name="status">
+                                <select class="form-select" id="status1" name="status">
                                     <option value="1">Active</option>
                                     <option value="2">Inactive</option>
                                 </select>

@@ -107,7 +107,7 @@ $page_title = ($employeeId > 0 ? 'Edit Employee' : 'Add Employee') . ' | Univers
                                 </div>
                                 <div class="col-md-3 mt-3">
                                     <label class="form-label">Status</label>
-                                    <select class="form-select" id="status" name="status"><option value="1">Active</option><option value="2">Inactive</option></select>
+                                    <select class="form-select" id="status1" name="status"><option value="1">Active</option><option value="2">Inactive</option></select>
                                 </div>
 
                                 <div class="col-md-6 mt-3">

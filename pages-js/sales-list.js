@@ -1,16 +1,22 @@
 $(document).ready(function () {
-    $('#preloader').fadeOut('slow');
-
     let listConfig = window.SALES_LIST_CONFIG || {};
     let documentType = parseInt(listConfig.document_type || 0);
     let documentTypes = listConfig.document_types || {};
     let permissions = listConfig.permissions || {};
 
-    loadSalesList();
+    initSalesListPage();
     bindSalesListEvents();
 
+    function initSalesListPage() {
+        loadDocumentPermissions(function () {
+            loadSalesList();
+        });
+    }
+
     function bindSalesListEvents() {
-        $('#filterBtn').on('click', loadSalesList);
+        $('#filterBtn').on('click', function () {
+            loadSalesList();
+        });
 
         $('#resetFilterBtn').on('click', function () {
             $('#searchText').val('');
@@ -30,16 +36,55 @@ $(document).ready(function () {
             let id = parseInt($(this).data('id') || 0);
             let sourceType = parseInt($(this).data('source-type') || 0);
             let targetType = parseInt($(this).data('target-type') || 0);
+
             if (id <= 0 || sourceType <= 0 || targetType <= 0) {
                 return;
             }
 
-            window.location.href = window.BASE_URL + 'pages/sales.php?mode=convert&source_id=' + id + '&source_type=' + sourceType + '&target_type=' + targetType;
+            window.location.href = window.BASE_URL +
+                'pages/sales.php?mode=convert&source_id=' + id +
+                '&source_type=' + sourceType +
+                '&target_type=' + targetType;
+        });
+    }
+
+    function loadDocumentPermissions(callback) {
+        $.ajax({
+            url: window.BASE_URL + 'api/sales.php',
+            type: 'GET',
+            dataType: 'json',
+            data: {
+                action: 'get_document_permissions'
+            },
+            success: function (response) {
+                if (response.status === true && response.data) {
+                    if (response.data.document_types) {
+                        documentTypes = response.data.document_types;
+                    }
+
+                    if (response.data.permissions) {
+                        permissions = response.data.permissions;
+                    }
+                }
+
+                if (typeof callback === 'function') {
+                    callback();
+                }
+            },
+            error: function (xhr) {
+                console.log(xhr.responseText);
+
+                if (typeof callback === 'function') {
+                    callback();
+                }
+            }
         });
     }
 
     function loadSalesList() {
-        $('#salesListBody').html('<tr><td colspan="11" class="text-center text-muted ">Loading...</td></tr>');
+        $('#salesListBody').html(
+            '<tr><td colspan="11" class="text-center text-muted">Loading...</td></tr>'
+        );
 
         $.ajax({
             url: window.BASE_URL + 'api/sales.php',
@@ -55,20 +100,28 @@ $(document).ready(function () {
             },
             success: function (response) {
                 if (response.status === true) {
-                    if (response.data.document_types) {
+                    if (response.data && response.data.document_types) {
                         documentTypes = response.data.document_types;
                     }
-                    if (response.data.permissions) {
+
+                    if (response.data && response.data.permissions) {
                         permissions = response.data.permissions;
                     }
-                    renderSalesList(response.data.rows || []);
+
+                    renderSalesList((response.data && response.data.rows) ? response.data.rows : []);
                 } else {
-                    $('#salesListBody').html('<tr><td colspan="11" class="text-center text-danger ">' + escapeHtml(response.message || 'Unable to load list') + '</td></tr>');
+                    $('#salesListBody').html(
+                        '<tr><td colspan="11" class="text-center text-danger">' +
+                        escapeHtml(response.message || 'Unable to load list') +
+                        '</td></tr>'
+                    );
                 }
             },
             error: function (xhr) {
                 console.log(xhr.responseText);
-                $('#salesListBody').html('<tr><td colspan="11" class="text-center text-danger ">Server error.</td></tr>');
+                $('#salesListBody').html(
+                    '<tr><td colspan="11" class="text-center text-danger">Server error.</td></tr>'
+                );
             }
         });
     }
@@ -77,27 +130,35 @@ $(document).ready(function () {
         updateCards(rows);
 
         if (!rows || rows.length === 0) {
-            $('#salesListBody').html('<tr><td colspan="11" class="text-center text-muted ">No records found.</td></tr>');
+            $('#salesListBody').html(
+                '<tr><td colspan="11" class="text-center text-muted">No records found.</td></tr>'
+            );
             return;
         }
 
         let html = '';
+
         $.each(rows, function (index, row) {
             let docType = parseInt(row.document_type || 0);
-            let converted = parseInt(row.conversion_status || 0) === 1 || parseInt(row.converted_to_sale_id || 0) > 0;
+            let converted = parseInt(row.conversion_status || 0) === 1 ||
+                parseInt(row.converted_to_sale_id || 0) > 0;
 
             html += `
                 <tr>
                     <td>${index + 1}</td>
+
                     <td>
                         <strong>${escapeHtml(row.sales_no || '')}</strong><br>
                         <span class="badge bg-soft-primary text-primary">${escapeHtml(documentLabel(docType))}</span>
                     </td>
+
                     <td>${formatDate(row.sales_date)}</td>
+
                     <td>
                         <strong>${escapeHtml(row.customer_name || '')}</strong><br>
                         <small class="text-muted">${escapeHtml(row.customer_mobile || '')}</small>
                     </td>
+
                     <td class="text-end">${formatCurrency(row.sub_total || 0)}</td>
                     <td class="text-end">${formatCurrency(row.tax_amount || 0)}</td>
                     <td class="text-end"><strong>${formatCurrency(row.grand_total || 0)}</strong></td>
@@ -114,6 +175,7 @@ $(document).ready(function () {
 
     function updateCards(rows) {
         rows = rows || [];
+
         let totalAmount = 0;
         let dueAmount = 0;
         let paidAmount = 0;
@@ -133,38 +195,118 @@ $(document).ready(function () {
     function actionButtons(row, converted) {
         let id = parseInt(row.id || 0);
         let docType = parseInt(row.document_type || 0);
-        let html = `<div class="btn-group btn-group-sm">
-            <a class="btn btn-outline-primary" href="${window.BASE_URL}pages/sales.php?id=${id}&mode=edit" title="Edit / View"><i class="mdi mdi-pencil"></i></a>`;
+
+        let html = `<div class="btn-group btn-group-sm">`;
+
+        if (docPermission(docType, 'view') || docPermission(docType, 'edit')) {
+            html += `
+                <a class="btn btn-outline-primary"
+                   href="${window.BASE_URL}pages/sales.php?id=${id}&mode=edit"
+                   title="Edit / View">
+                    <i class="mdi mdi-pencil"></i>
+                </a>
+            `;
+        }
 
         if (parseFloat(row.due_amount || 0) > 0) {
-            html += `<a class="btn btn-outline-success" href="${window.BASE_URL}pages/customer-payments.php?sales_id=${id}" title="Receive Payment"><i class="mdi mdi-cash-plus"></i></a>`;
+            html += `
+                <a class="btn btn-outline-success"
+                   href="${window.BASE_URL}pages/customer-payments.php?sales_id=${id}"
+                   title="Receive Payment">
+                    <i class="mdi mdi-cash-plus"></i>
+                </a>
+            `;
         }
 
         if (docPermission(docType, 'print')) {
-            html += `<a class="btn btn-outline-secondary" target="_blank" href="${window.BASE_URL}pages/sales-print.php?id=${id}" title="Print"><i class="mdi mdi-printer"></i></a>`;
+            html += `
+                <a class="btn btn-outline-danger"
+                   target="_blank"
+                   href="${window.BASE_URL}pages/sales-print.php?id=${id}&print=1"
+                   title="Print PDF">
+                    <i class="mdi mdi-file-pdf-box"></i>
+                </a>
+            `;
         }
 
         if (!converted) {
             if (docType === 1) {
                 if (docPermission(1, 'convert') && docPermission(2, 'add')) {
-                    html += `<button type="button" class="btn btn-outline-info convert-doc-btn" data-id="${id}" data-source-type="1" data-target-type="2" title="Convert to Proforma"><i class="mdi mdi-file-earmark-text"></i></button>`;
+                    html += `
+                        <button type="button"
+                                class="btn btn-outline-info convert-doc-btn"
+                                data-id="${id}"
+                                data-source-type="1"
+                                data-target-type="2"
+                                title="Convert to Proforma">
+                            <i class="mdi mdi-file-document-outline"></i>
+                        </button>
+                    `;
                 }
+
                 if (docPermission(1, 'convert') && docPermission(3, 'add')) {
-                    html += `<button type="button" class="btn btn-outline-success convert-doc-btn" data-id="${id}" data-source-type="1" data-target-type="3" title="Convert to Sales Bill"><i class="mdi mdi-receipt"></i></button>`;
+                    html += `
+                        <button type="button"
+                                class="btn btn-outline-success convert-doc-btn"
+                                data-id="${id}"
+                                data-source-type="1"
+                                data-target-type="3"
+                                title="Convert to Sales Bill">
+                            <i class="mdi mdi-receipt-text-outline"></i>
+                        </button>
+                    `;
                 }
+
                 if (docPermission(1, 'generate_invoice') && docPermission(5, 'add')) {
-                    html += `<button type="button" class="btn btn-warning convert-doc-btn" data-id="${id}" data-source-type="1" data-target-type="5" title="Generate Invoice"><i class="mdi mdi-receipt-cutoff"></i></button>`;
+                    html += `
+                        <button type="button"
+                                class="btn btn-warning convert-doc-btn"
+                                data-id="${id}"
+                                data-source-type="1"
+                                data-target-type="5"
+                                title="Generate Invoice">
+                            <i class="mdi mdi-receipt-text-check-outline"></i>
+                        </button>
+                    `;
                 }
             } else if (docType === 2) {
                 if (docPermission(2, 'convert') && docPermission(3, 'add')) {
-                    html += `<button type="button" class="btn btn-outline-success convert-doc-btn" data-id="${id}" data-source-type="2" data-target-type="3" title="Convert to Sales Bill"><i class="mdi mdi-receipt"></i></button>`;
+                    html += `
+                        <button type="button"
+                                class="btn btn-outline-success convert-doc-btn"
+                                data-id="${id}"
+                                data-source-type="2"
+                                data-target-type="3"
+                                title="Convert to Sales Bill">
+                            <i class="mdi mdi-receipt-text-outline"></i>
+                        </button>
+                    `;
                 }
+
                 if (docPermission(2, 'generate_invoice') && docPermission(5, 'add')) {
-                    html += `<button type="button" class="btn btn-warning convert-doc-btn" data-id="${id}" data-source-type="2" data-target-type="5" title="Generate Invoice"><i class="mdi mdi-receipt-cutoff"></i></button>`;
+                    html += `
+                        <button type="button"
+                                class="btn btn-warning convert-doc-btn"
+                                data-id="${id}"
+                                data-source-type="2"
+                                data-target-type="5"
+                                title="Generate Invoice">
+                            <i class="mdi mdi-receipt-text-check-outline"></i>
+                        </button>
+                    `;
                 }
             } else if (docType === 3) {
                 if (docPermission(3, 'generate_invoice') && docPermission(5, 'add')) {
-                    html += `<button type="button" class="btn btn-warning convert-doc-btn" data-id="${id}" data-source-type="3" data-target-type="5" title="Generate Invoice"><i class="mdi mdi-receipt-cutoff"></i></button>`;
+                    html += `
+                        <button type="button"
+                                class="btn btn-warning convert-doc-btn"
+                                data-id="${id}"
+                                data-source-type="3"
+                                data-target-type="5"
+                                title="Generate Invoice">
+                            <i class="mdi mdi-receipt-text-check-outline"></i>
+                        </button>
+                    `;
                 }
             }
         }
@@ -174,11 +316,35 @@ $(document).ready(function () {
     }
 
     function docPermission(typeId, action) {
+        typeId = parseInt(typeId || 0);
+
+        /*
+         * If permission payload is not loaded, allow action buttons.
+         * This prevents buttons from disappearing when API returns only rows.
+         */
+        if (!permissions || Object.keys(permissions).length === 0) {
+            return true;
+        }
+
         return !!(permissions[typeId] && permissions[typeId][action]);
     }
 
     function documentLabel(typeId) {
-        return documentTypes[typeId] && documentTypes[typeId].label ? documentTypes[typeId].label : 'Document';
+        typeId = parseInt(typeId || 0);
+
+        if (documentTypes[typeId] && documentTypes[typeId].label) {
+            return documentTypes[typeId].label;
+        }
+
+        let fallback = {
+            1: 'Quotation',
+            2: 'Proforma Bill',
+            3: 'Sales Bill',
+            4: 'Direct Sale',
+            5: 'Final Invoice'
+        };
+
+        return fallback[typeId] || 'Document';
     }
 
     function statusBadge(status, converted) {
@@ -187,10 +353,12 @@ $(document).ready(function () {
         }
 
         status = parseInt(status || 0);
+
         if (status === 1) return '<span class="badge bg-success">Active</span>';
         if (status === 2) return '<span class="badge bg-primary">Final</span>';
         if (status === 3) return '<span class="badge bg-danger">Deleted</span>';
         if (status === 4) return '<span class="badge bg-warning text-dark">Cancelled</span>';
+
         return '<span class="badge bg-secondary">Unknown</span>';
     }
 
@@ -203,8 +371,13 @@ $(document).ready(function () {
 
     function formatDate(date) {
         if (!date) return '-';
+
         let parts = String(date).split('-');
-        if (parts.length !== 3) return escapeHtml(date);
+
+        if (parts.length !== 3) {
+            return escapeHtml(date);
+        }
+
         return parts[2] + '-' + parts[1] + '-' + parts[0];
     }
 

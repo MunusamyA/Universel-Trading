@@ -190,7 +190,7 @@ $page_title = "Roles & Permissions | Universal ERP";
                                        data-off-label="Off"></label>
 
                                 <input type="hidden"
-                                       id="status"
+                                       id="status1"
                                        name="status"
                                        value="1">
                             </div>
