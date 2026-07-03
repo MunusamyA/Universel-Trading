@@ -104,7 +104,7 @@ function platformOwnerLogin(array $user)
     jsonResponse(true, 'Login successful.', [
         'user_type' => 'platform_owner'
     ], [
-        'redirect' => 'dashboard.php'
+        'redirect' => 'pages/dashboard.php'
     ]);
 }
 
@@ -205,7 +205,7 @@ function businessUserLogin(PDO $pdo, array $user)
     jsonResponse(true, 'Login successful.', [
         'user_type' => 'business_user'
     ], [
-        'redirect' => 'dashboard.php'
+        'redirect' => 'pages/dashboard.php'
     ]);
 }
 

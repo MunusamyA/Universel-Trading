@@ -16,7 +16,7 @@ function sidebarUrl($url)
 
     $url = ltrim($url, '/');
 
-    if ($url === 'dashboard.php' || $url === 'index.php' || $url === 'login.php') {
+    if ($url === 'pages/dashboard.php' || $url === 'pages/index.php' || $url === 'pages/login.php') {
         return BASE_URL . $url;
     }
 
@@ -153,7 +153,7 @@ foreach ($menus as $menu) {
 
         <?php if (empty($parentMenus)) { ?>
             <li>
-                <a href="<?= BASE_URL; ?>dashboard.php" class="waves-effect">
+                <a href="<?= BASE_URL; ?>pages/dashboard.php" class="waves-effect">
                     <i class="dripicons-device-desktop"></i>
                     <span>Dashboard</span>
                 </a>

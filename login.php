@@ -4,7 +4,7 @@ require_once 'includes/security.php';
 secureSessionStart();
 
 if (isset($_SESSION['user_id']) && !empty($_SESSION['user_id'])) {
-    header("Location: dashboard.php");
+    header("Location: pages/dashboard.php");
     exit;
 }
 

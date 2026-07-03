@@ -38,7 +38,7 @@ $page_title = 'My Profile | Universal ERP';
                                 <h4 class="mb-0">My Profile</h4>
                                 <p class="text-muted mb-0 mt-1">View and update your account details.</p>
                             </div>
-                            <a href="<?= BASE_URL; ?>dashboard.php" class="btn btn-light">
+                            <a href="<?= BASE_URL; ?>pages/dashboard.php" class="btn btn-light">
                                 <i class="mdi mdi-arrow-left me-1"></i> Back
                             </a>
                         </div>

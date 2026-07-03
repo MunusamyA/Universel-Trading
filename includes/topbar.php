@@ -14,7 +14,7 @@ $pageTitle = $page_title ?? 'Dashboard';
             <!-- LOGO -->
             <div class="navbar-brand-box">
 
-                <a href="<?= BASE_URL; ?>dashboard.php" class="logo logo-dark">
+                <a href="<?= BASE_URL; ?>pages/dashboard.php" class="logo logo-dark">
                     <span class="logo-sm">
                         <img src="<?= BASE_URL; ?>assets/images/logo-sm.png"
                              alt="Logo"
@@ -28,7 +28,7 @@ $pageTitle = $page_title ?? 'Dashboard';
                     </span>
                 </a>
 
-                <a href="<?= BASE_URL; ?>dashboard.php" class="logo logo-light">
+                <a href="<?= BASE_URL; ?>pages/dashboard.php" class="logo logo-light">
                     <span class="logo-sm">
                         <img src="<?= BASE_URL; ?>assets/images/logo-sm.png"
                              alt="Logo"

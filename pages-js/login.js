@@ -58,7 +58,7 @@ $(document).ready(function () {
                     showToast('success', response.message || 'Login successful.', 3000);
 
                     setTimeout(function () {
-                        window.location.href = response.redirect || 'dashboard.php';
+                        window.location.href = response.redirect || 'pages/dashboard.php';
                     }, 700);
                 } else {
                     handleApiError(response);

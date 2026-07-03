@@ -8,7 +8,7 @@ secureSessionStart();
 requireLogin();
 
 if (!isPlatformOwner() && !hasPermission('branch_approvals', 'view')) {
-    header('Location: ' . BASE_URL . 'dashboard.php');
+    header('Location: ' . BASE_URL . 'pages/dashboard.php');
     exit;
 }
 

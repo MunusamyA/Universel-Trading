@@ -196,7 +196,7 @@ function hasPermission($menuKey, $action = 'view')
 function requirePermission($menuKey, $action = 'view')
 {
     if (!hasPermission($menuKey, $action)) {
-        header('Location: ' . BASE_URL . 'dashboard.php');
+        header('Location: ' . BASE_URL . 'pages/dashboard.php');
         exit;
     }
 }
