@@ -11,6 +11,7 @@ requireApiLogin();
 $action = cleanInput($_POST['action'] ?? $_GET['action'] ?? '');
 
 switch ($action) {
+    case 'get_page_context': getPageContext($pdo); break;
     case 'list_products': listProducts($pdo); break;
     case 'get_product': getProduct($pdo); break;
     case 'save_product': verifyCsrfToken(); saveProduct($pdo); break;
@@ -24,11 +25,62 @@ switch ($action) {
     default: jsonResponse(false, 'Invalid action.');
 }
 
-function requireProductPermission($action = 'view') {
-    if (isPlatformOwner()) return;
-    if (function_exists('hasPermission') && !hasPermission('products', $action)) {
+function productCan($actionCode)
+{
+    if (isPlatformOwner()) {
+        return true;
+    }
+
+    return function_exists('hasPermission') && hasPermission('products', (int)$actionCode);
+}
+
+function requireProductPermission($action = 1)
+{
+    $map = [
+        'view' => 1,
+        'list' => 2,
+        'add' => 3,
+        'create' => 3,
+        'edit' => 4,
+        'delete' => 5,
+        'print' => 6,
+        'export' => 7
+    ];
+
+    $actionCode = is_numeric($action) ? (int)$action : (int)($map[(string)$action] ?? 1);
+
+    if (!productCan($actionCode)) {
         jsonResponse(false, 'Permission denied.');
     }
+}
+
+function productDropdownAllowed()
+{
+    return productCan(1) || productCan(2) || productCan(3) || productCan(4);
+}
+
+function getPageContext(PDO $pdo)
+{
+    if (!productCan(1) && !productCan(2) && !productCan(3) && !productCan(4)) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
+    jsonResponse(true, 'Page context loaded.', [
+        'context' => [
+            'can_view' => productCan(1),
+            'can_list' => productCan(2),
+            'can_add' => productCan(3),
+            'can_edit' => productCan(4),
+            'can_delete' => productCan(5),
+            'page_title' => 'Product Master',
+            'page_note' => 'Manage products based on role permission.',
+            'add_button_label' => 'Add Product',
+            'add_form_title' => 'Add Product',
+            'edit_form_title' => 'Edit Product',
+            'list_url' => BASE_URL . 'pages/products.php',
+            'form_url' => BASE_URL . 'pages/product-form.php'
+        ]
+    ]);
 }
 
 function getScope() {
@@ -39,7 +91,7 @@ function getScope() {
 }
 
 function getCategories(PDO $pdo) {
-    requireProductPermission('view');
+    if (!productDropdownAllowed()) jsonResponse(false, 'Permission denied.');
     $scope = getScope();
     $stmt = $pdo->prepare("SELECT id, category_name FROM categories WHERE business_id=:business_id AND branch_id=:branch_id AND status=1 ORDER BY category_name ASC");
     $stmt->execute([':business_id'=>$scope['business_id'], ':branch_id'=>$scope['branch_id']]);
@@ -47,7 +99,7 @@ function getCategories(PDO $pdo) {
 }
 
 function getSubCategories(PDO $pdo) {
-    requireProductPermission('view');
+    if (!productDropdownAllowed()) jsonResponse(false, 'Permission denied.');
     $scope = getScope();
     $categoryId = (int)($_GET['category_id'] ?? 0);
     $where = "WHERE business_id=:business_id AND branch_id=:branch_id AND status=1";
@@ -59,7 +111,7 @@ function getSubCategories(PDO $pdo) {
 }
 
 function getHsnCodes(PDO $pdo) {
-    requireProductPermission('view');
+    if (!productDropdownAllowed()) jsonResponse(false, 'Permission denied.');
     $scope = getScope();
     $stmt = $pdo->prepare("SELECT id, hsn_code, hsn_description, cgst_percentage, sgst_percentage, igst_percentage FROM hsn_codes WHERE business_id=:business_id AND branch_id=:branch_id AND status=1 ORDER BY hsn_code ASC");
     $stmt->execute([':business_id'=>$scope['business_id'], ':branch_id'=>$scope['branch_id']]);
@@ -67,7 +119,7 @@ function getHsnCodes(PDO $pdo) {
 }
 
 function listProducts(PDO $pdo) {
-    requireProductPermission('view');
+    if (!productCan(1) && !productCan(2)) jsonResponse(false, 'Permission denied.');
     $scope = getScope();
     $search = cleanInput($_GET['search'] ?? '');
     $status = (int)($_GET['status'] ?? 0);
@@ -79,8 +131,28 @@ function listProducts(PDO $pdo) {
     if ($status === 1 || $status === 2) { $where .= " AND p.status=:status"; $params[':status']=$status; }
     if ($categoryId > 0) { $where .= " AND p.category_id=:category_id"; $params[':category_id']=$categoryId; }
     if ($search !== '') {
-        $where .= " AND (p.product_code LIKE :search OR p.product_name LIKE :search OR c.category_name LIKE :search OR sc.sub_category_name LIKE :search OR h.hsn_code LIKE :search)";
-        $params[':search'] = '%'.$search.'%';
+        /*
+        |--------------------------------------------------------------------------
+        | Unique PDO placeholders avoid SQLSTATE[HY093].
+        |--------------------------------------------------------------------------
+        */
+        $where .= "
+            AND (
+                p.product_code LIKE :search_product_code
+                OR p.product_name LIKE :search_product_name
+                OR c.category_name LIKE :search_category_name
+                OR sc.sub_category_name LIKE :search_sub_category_name
+                OR h.hsn_code LIKE :search_hsn_code
+            )
+        ";
+
+        $searchValue = '%' . $search . '%';
+
+        $params[':search_product_code'] = $searchValue;
+        $params[':search_product_name'] = $searchValue;
+        $params[':search_category_name'] = $searchValue;
+        $params[':search_sub_category_name'] = $searchValue;
+        $params[':search_hsn_code'] = $searchValue;
     }
 
     $stmt = $pdo->prepare("
@@ -94,14 +166,25 @@ function listProducts(PDO $pdo) {
     ");
     $stmt->execute($params);
 
+    $products = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $canEdit = productCan(4);
+    $canDelete = productCan(5);
+
+    foreach ($products as &$product) {
+        $product['can_edit'] = $canEdit;
+        $product['can_delete'] = $canDelete;
+    }
+    unset($product);
+
     $stats = $pdo->prepare("SELECT COUNT(*) total_products, COALESCE(SUM(CASE WHEN status=1 THEN 1 ELSE 0 END),0) active_products, COALESCE(SUM(CASE WHEN status=2 THEN 1 ELSE 0 END),0) inactive_products, COALESCE(SUM(minimum_stock),0) minimum_stock_total FROM products WHERE business_id=:business_id AND branch_id=:branch_id");
     $stats->execute([':business_id'=>$scope['business_id'], ':branch_id'=>$scope['branch_id']]);
 
-    jsonResponse(true, 'Products loaded.', ['products'=>$stmt->fetchAll(PDO::FETCH_ASSOC), 'stats'=>$stats->fetch(PDO::FETCH_ASSOC)]);
+    jsonResponse(true, 'Products loaded.', ['products'=>$products, 'stats'=>$stats->fetch(PDO::FETCH_ASSOC)]);
 }
 
 function getProduct(PDO $pdo) {
-    requireProductPermission('view');
+    requireProductPermission(4);
     $scope = getScope();
     $id = (int)($_GET['product_id'] ?? 0);
     if ($id <= 0) jsonResponse(false, 'Invalid product.');
@@ -115,7 +198,7 @@ function getProduct(PDO $pdo) {
 function saveProduct(PDO $pdo) {
     $scope = getScope();
     $productId = (int)($_POST['product_id'] ?? 0);
-    requireProductPermission($productId > 0 ? 'edit' : 'add');
+    requireProductPermission($productId > 0 ? 4 : 3);
 
     $categoryId = (int)($_POST['category_id'] ?? 0);
     $subCategoryId = (int)($_POST['sub_category_id'] ?? 0);
@@ -556,7 +639,7 @@ function saveInitialStockPurchase(
 
 
 function deleteProduct(PDO $pdo) {
-    requireProductPermission('delete');
+    requireProductPermission(5);
     $scope = getScope();
     $productId = (int)($_POST['product_id'] ?? 0);
     if ($productId <= 0) jsonResponse(false, 'Invalid product.');
@@ -580,7 +663,7 @@ function deleteProduct(PDO $pdo) {
 }
 
 function quickAddCategory(PDO $pdo) {
-    requireProductPermission('add');
+    requireProductPermission(3);
     $scope=getScope();
     $name=cleanInput($_POST['category_name'] ?? '');
     $desc=cleanInput($_POST['description'] ?? '');
@@ -591,7 +674,7 @@ function quickAddCategory(PDO $pdo) {
 }
 
 function quickAddSubCategory(PDO $pdo) {
-    requireProductPermission('add');
+    requireProductPermission(3);
     $scope=getScope();
     $categoryId=(int)($_POST['category_id'] ?? 0);
     $name=cleanInput($_POST['sub_category_name'] ?? '');
@@ -605,7 +688,7 @@ function quickAddSubCategory(PDO $pdo) {
 }
 
 function quickAddHsn(PDO $pdo) {
-    requireProductPermission('add');
+    requireProductPermission(3);
     $scope=getScope();
     $code=cleanInput($_POST['hsn_code'] ?? '');
     $desc=cleanInput($_POST['hsn_description'] ?? '');

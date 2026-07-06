@@ -12,14 +12,17 @@ $page_title = ($employeeId > 0 ? 'Edit Employee' : 'Add Employee') . ' | Univers
 ?>
 <!doctype html>
 <html lang="en">
+
 <head>
     <?php include BASE_PATH . 'includes/head.php'; ?>
 </head>
 
 <body data-sidebar="dark">
+
 <?php include BASE_PATH . 'includes/pre-loader.php'; ?>
 
 <div id="layout-wrapper">
+
     <?php include BASE_PATH . 'includes/topbar.php'; ?>
 
     <div class="vertical-menu">
@@ -29,45 +32,60 @@ $page_title = ($employeeId > 0 ? 'Edit Employee' : 'Add Employee') . ' | Univers
     </div>
 
     <div class="main-content">
+
         <div class="page-content">
             <div class="container-fluid">
 
                 <div class="row">
                     <div class="col-12">
+
                         <div class="page-title-box d-flex align-items-center justify-content-between">
-                            <h4 class="mb-0"><?= $employeeId > 0 ? 'Edit Employee' : 'Add Employee'; ?></h4>
-                            <a href="<?= BASE_URL; ?>pages/employees.php" class="btn btn-light">
+                            <h4 class="mb-0" id="employeePageTitle"><?= $employeeId > 0 ? 'Edit Employee' : 'Add Employee'; ?></h4>
+
+                            <a href="<?= BASE_URL; ?>pages/employees.php" class="btn btn-light" id="backEmployeesBtn">
                                 <i class="mdi mdi-arrow-left me-1"></i> Back
                             </a>
                         </div>
+
                     </div>
                 </div>
 
                 <form id="employeeForm" autocomplete="off">
                     <?= csrfTokenInput(); ?>
+
                     <input type="hidden" name="employee_id" id="employee_id" value="<?= $employeeId; ?>">
 
                     <div class="card">
-                        <div class="card-header"><h5 class="mb-0">Employee Details</h5></div>
+                        <div class="card-header">
+                            <h5 class="mb-0">Employee Details</h5>
+                        </div>
+
                         <div class="card-body">
-                            <div class="alert alert-info">Employee will be created under current login branch. Role dropdown shows only current branch roles. No modal used.</div>
+                            <div class="alert alert-info">
+                                Employee will be created under current login branch. Role dropdown shows only current branch roles. No modal used.
+                            </div>
 
                             <div class="row">
                                 <div class="col-md-3">
                                     <label class="form-label">Employee Code</label>
                                     <input type="text" class="form-control" id="employee_code" name="employee_code" placeholder="Auto if empty">
                                 </div>
+
                                 <div class="col-md-3">
                                     <label class="form-label">Employee Name <span class="text-danger">*</span></label>
                                     <input type="text" class="form-control" id="employee_name" name="employee_name">
                                 </div>
+
                                 <div class="col-md-3">
                                     <label class="form-label">Username <span class="text-danger">*</span></label>
                                     <input type="text" class="form-control" id="username" name="username">
                                 </div>
+
                                 <div class="col-md-3">
                                     <label class="form-label">Branch Role <span class="text-danger">*</span></label>
-                                    <select class="form-select" id="role_id" name="role_id"><option value="">Select Role</option></select>
+                                    <select class="form-select" id="role_id" name="role_id">
+                                        <option value="">Select Role</option>
+                                    </select>
                                     <small class="text-muted">Locked Branch Admin role will not show.</small>
                                 </div>
 
@@ -75,10 +93,12 @@ $page_title = ($employeeId > 0 ? 'Edit Employee' : 'Add Employee') . ' | Univers
                                     <label class="form-label">Mobile</label>
                                     <input type="text" class="form-control" id="mobile" name="mobile" maxlength="10">
                                 </div>
+
                                 <div class="col-md-3 mt-3">
                                     <label class="form-label">Email</label>
                                     <input type="email" class="form-control" id="email" name="email">
                                 </div>
+
                                 <div class="col-md-3 mt-3">
                                     <label class="form-label">Gender</label>
                                     <select class="form-select" id="gender" name="gender">
@@ -88,6 +108,7 @@ $page_title = ($employeeId > 0 ? 'Edit Employee' : 'Add Employee') . ' | Univers
                                         <option value="3">Other</option>
                                     </select>
                                 </div>
+
                                 <div class="col-md-3 mt-3">
                                     <label class="form-label">Date of Birth</label>
                                     <input type="date" class="form-control" id="dob" name="dob">
@@ -97,31 +118,40 @@ $page_title = ($employeeId > 0 ? 'Edit Employee' : 'Add Employee') . ' | Univers
                                     <label class="form-label">Joining Date</label>
                                     <input type="date" class="form-control" id="joining_date" name="joining_date">
                                 </div>
+
                                 <div class="col-md-3 mt-3">
                                     <label class="form-label">Designation</label>
                                     <input type="text" class="form-control" id="designation" name="designation">
                                 </div>
+
                                 <div class="col-md-3 mt-3">
                                     <label class="form-label">Salary</label>
                                     <input type="number" step="0.01" min="0" class="form-control" id="salary" name="salary" value="0.00">
                                 </div>
+
                                 <div class="col-md-3 mt-3">
                                     <label class="form-label">Status</label>
-                                    <select class="form-select" id="status1" name="status"><option value="1">Active</option><option value="2">Inactive</option></select>
+                                    <select class="form-select" id="status1" name="status">
+                                        <option value="1">Active</option>
+                                        <option value="2">Inactive</option>
+                                    </select>
                                 </div>
 
                                 <div class="col-md-6 mt-3">
                                     <label class="form-label">Address</label>
                                     <textarea class="form-control" id="address" name="address" rows="2"></textarea>
                                 </div>
+
                                 <div class="col-md-2 mt-3">
                                     <label class="form-label">City</label>
                                     <input type="text" class="form-control" id="city" name="city">
                                 </div>
+
                                 <div class="col-md-2 mt-3">
                                     <label class="form-label">State</label>
                                     <input type="text" class="form-control" id="state" name="state">
                                 </div>
+
                                 <div class="col-md-2 mt-3">
                                     <label class="form-label">Pincode</label>
                                     <input type="text" class="form-control" id="pincode" name="pincode">
@@ -131,16 +161,27 @@ $page_title = ($employeeId > 0 ? 'Edit Employee' : 'Add Employee') . ' | Univers
                     </div>
 
                     <div class="card">
-                        <div class="card-header"><h5 class="mb-0">Login Password</h5></div>
+                        <div class="card-header">
+                            <h5 class="mb-0">Login Password</h5>
+                        </div>
+
                         <div class="card-body">
-                            <div class="alert alert-warning edit-password-note d-none">Leave password fields empty if you do not want to change password.</div>
+                            <div class="alert alert-warning edit-password-note d-none">
+                                Leave password fields empty if you do not want to change password.
+                            </div>
+
                             <div class="row">
                                 <div class="col-md-6">
-                                    <label class="form-label">Password <span class="text-danger new-password-required">*</span></label>
+                                    <label class="form-label">
+                                        Password <span class="text-danger new-password-required">*</span>
+                                    </label>
                                     <input type="password" class="form-control" id="password" name="password" placeholder="Minimum 6 characters">
                                 </div>
+
                                 <div class="col-md-6">
-                                    <label class="form-label">Confirm Password <span class="text-danger new-password-required">*</span></label>
+                                    <label class="form-label">
+                                        Confirm Password <span class="text-danger new-password-required">*</span>
+                                    </label>
                                     <input type="password" class="form-control" id="confirm_password" name="confirm_password">
                                 </div>
                             </div>
@@ -155,14 +196,35 @@ $page_title = ($employeeId > 0 ? 'Edit Employee' : 'Add Employee') . ' | Univers
 
             </div>
         </div>
+
         <?php include BASE_PATH . 'includes/footer.php'; ?>
+
     </div>
 </div>
 
-<?php include BASE_PATH . 'includes/rightbar.php'; ?>
-<?php include BASE_PATH . 'includes/scripts.php'; ?>
+<?php
+$rightbarPath1 = BASE_PATH . 'includes/rightbar.php';
 
-<script>window.BASE_URL = "<?= BASE_URL; ?>"; window.EMPLOYEE_ID = <?= $employeeId; ?>;</script>
+if (file_exists($rightbarPath1)) {
+    include $rightbarPath1;
+}
+?>
+
+<?php
+$scriptsPath1 = BASE_PATH . 'includes/scripts.php';
+
+if (file_exists($scriptsPath1)) {
+    include $scriptsPath1;
+}
+?>
+
+<script>
+    window.BASE_URL = <?= json_encode(BASE_URL); ?>;
+    window.MASTER_FILE = "employees";
+    window.EMPLOYEE_ID = <?= (int)$employeeId; ?>;
+</script>
+
 <script src="<?= BASE_URL; ?>pages-js/employee-form.js?v=<?= time(); ?>"></script>
+
 </body>
 </html>

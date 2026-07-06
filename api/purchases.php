@@ -13,6 +13,9 @@ requireApiLogin();
 $action = cleanInput($_POST['action'] ?? $_GET['action'] ?? '');
 
 switch ($action) {
+    case 'get_page_context':
+        getPageContext($pdo);
+        break;
     case 'list_purchases':
         listPurchases($pdo);
         break;
@@ -57,15 +60,94 @@ switch ($action) {
         jsonResponse(false, 'Invalid action.');
 }
 
-function requirePurchasePermission($action = 'view')
+function purchaseCan($actionCode)
 {
     if (isPlatformOwner()) {
-        return;
+        return true;
     }
 
-    if (function_exists('hasPermission') && !hasPermission('purchases', $action)) {
+    return function_exists('hasPermission') && hasPermission('purchases', (int)$actionCode);
+}
+
+function purchaseRelatedCan($menuKey, $actionCode)
+{
+    if (isPlatformOwner()) {
+        return true;
+    }
+
+    return function_exists('hasPermission') && hasPermission((string)$menuKey, (int)$actionCode);
+}
+
+function supplierPaymentCanFromPurchase()
+{
+    return purchaseCan(17)
+        || purchaseRelatedCan('supplier_payments', 17)
+        || purchaseRelatedCan('supplier_payments', 3)
+        || purchaseRelatedCan('suppliers', 17);
+}
+
+function supplierLedgerCanFromPurchase()
+{
+    return purchaseRelatedCan('supplier_ledger', 1)
+        || purchaseRelatedCan('supplier_ledger', 2)
+        || purchaseCan(1)
+        || purchaseCan(2);
+}
+
+function purchaseDropdownAllowed()
+{
+    return purchaseCan(1) || purchaseCan(2) || purchaseCan(3) || purchaseCan(4);
+}
+
+function requirePurchasePermission($action = 1)
+{
+    $map = [
+        'view' => 1,
+        'list' => 2,
+        'add' => 3,
+        'create' => 3,
+        'edit' => 4,
+        'delete' => 5,
+        'print' => 6,
+        'export' => 7,
+        'supplier_payment' => 17,
+        'payment' => 17,
+        'cancel' => 18
+    ];
+
+    $actionCode = is_numeric($action) ? (int)$action : (int)($map[(string)$action] ?? 1);
+
+    if (!purchaseCan($actionCode)) {
         jsonResponse(false, 'Permission denied.');
     }
+}
+
+function getPageContext(PDO $pdo)
+{
+    if (!purchaseCan(1) && !purchaseCan(2) && !purchaseCan(3) && !purchaseCan(4)) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
+    jsonResponse(true, 'Page context loaded.', [
+        'context' => [
+            'can_view' => purchaseCan(1),
+            'can_list' => purchaseCan(2),
+            'can_add' => purchaseCan(3),
+            'can_edit' => purchaseCan(4),
+            'can_delete' => purchaseCan(5),
+            'can_supplier_payment' => supplierPaymentCanFromPurchase(),
+            'can_supplier_ledger' => supplierLedgerCanFromPurchase(),
+            'page_title' => 'Purchases',
+            'page_note' => 'Manage purchase bills based on your role permission.',
+            'add_button_label' => 'Add Purchase',
+            'add_form_title' => 'Add Purchase',
+            'edit_form_title' => 'Edit Purchase',
+            'list_url' => BASE_URL . 'pages/purchases.php',
+            'form_url' => BASE_URL . 'pages/purchase-form.php',
+            'supplier_payment_url' => BASE_URL . 'pages/supplier-payments.php',
+            'supplier_ledger_url' => BASE_URL . 'pages/supplier-ledger.php'
+        ]
+    ]);
 }
 
 function getScope()
@@ -86,7 +168,7 @@ function getScope()
 
 function getPurchasePaymentModes(PDO $pdo)
 {
-    requirePurchasePermission('view');
+    if (!purchaseDropdownAllowed()) jsonResponse(false, 'Permission denied.');
     $scope = getScope();
 
     $stmt = $pdo->prepare("
@@ -109,7 +191,7 @@ function getPurchasePaymentModes(PDO $pdo)
 
 function listPurchases(PDO $pdo)
 {
-    requirePurchasePermission('view');
+    if (!purchaseCan(1) && !purchaseCan(2)) jsonResponse(false, 'Permission denied.');
 
     $scope = getScope();
     $search = cleanInput($_GET['search'] ?? '');
@@ -161,6 +243,19 @@ function listPurchases(PDO $pdo)
     ");
     $stmt->execute($params);
 
+    $purchases = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $canEdit = purchaseCan(4);
+    $canDelete = purchaseCan(5);
+    $canSupplierPayment = supplierPaymentCanFromPurchase();
+
+    foreach ($purchases as &$purchase) {
+        $purchase['can_edit'] = $canEdit;
+        $purchase['can_delete'] = $canDelete;
+        $purchase['can_supplier_payment'] = $canSupplierPayment;
+    }
+    unset($purchase);
+
     $statsStmt = $pdo->prepare("
         SELECT
             COUNT(*) AS total_purchases,
@@ -178,14 +273,14 @@ function listPurchases(PDO $pdo)
     ]);
 
     jsonResponse(true, 'Purchases loaded.', [
-        'purchases' => $stmt->fetchAll(PDO::FETCH_ASSOC),
+        'purchases' => $purchases,
         'stats' => $statsStmt->fetch(PDO::FETCH_ASSOC)
     ]);
 }
 
 function getPurchase(PDO $pdo)
 {
-    requirePurchasePermission('view');
+    requirePurchasePermission(4);
 
     $scope = getScope();
     $purchaseId = (int)($_GET['purchase_id'] ?? 0);
@@ -245,7 +340,7 @@ function savePurchase(PDO $pdo)
     $scope = getScope();
     $purchaseId = (int)($_POST['purchase_id'] ?? 0);
 
-    requirePurchasePermission($purchaseId > 0 ? 'edit' : 'add');
+    requirePurchasePermission($purchaseId > 0 ? 4 : 3);
 
     $supplierId = (int)($_POST['supplier_id'] ?? 0);
     $billNo = cleanInput($_POST['bill_no'] ?? '');
@@ -820,7 +915,7 @@ function getFifoPurchaseItems(PDO $pdo, array $scope, $productId)
 
 function deletePurchase(PDO $pdo)
 {
-    requirePurchasePermission('delete');
+    requirePurchasePermission(5);
 
     $scope = getScope();
     $purchaseId = (int)($_POST['purchase_id'] ?? 0);
@@ -860,7 +955,7 @@ function deletePurchase(PDO $pdo)
 
 function getSuppliers(PDO $pdo)
 {
-    requirePurchasePermission('view');
+    if (!purchaseDropdownAllowed()) jsonResponse(false, 'Permission denied.');
 
     $scope = getScope();
 
@@ -884,7 +979,7 @@ function getSuppliers(PDO $pdo)
 
 function getProducts(PDO $pdo)
 {
-    requirePurchasePermission('view');
+    if (!purchaseDropdownAllowed()) jsonResponse(false, 'Permission denied.');
 
     $scope = getScope();
 
@@ -929,7 +1024,7 @@ function getProducts(PDO $pdo)
 
 function getProduct(PDO $pdo)
 {
-    requirePurchasePermission('view');
+    if (!purchaseDropdownAllowed()) jsonResponse(false, 'Permission denied.');
 
     $scope = getScope();
     $productId = (int)($_GET['product_id'] ?? 0);
@@ -1018,7 +1113,7 @@ function insertDynamic(PDO $pdo, string $table, array $data): int
 
 function getHsnCodes(PDO $pdo)
 {
-    requirePurchasePermission('view');
+    if (!purchaseDropdownAllowed()) jsonResponse(false, 'Permission denied.');
 
     $scope = getScope();
 
@@ -1049,7 +1144,7 @@ function getHsnCodes(PDO $pdo)
 
 function getProductMasters(PDO $pdo)
 {
-    requirePurchasePermission('view');
+    if (!purchaseDropdownAllowed()) jsonResponse(false, 'Permission denied.');
 
     $scope = getScope();
 
@@ -1108,7 +1203,7 @@ function getProductMasters(PDO $pdo)
 
 function addQuickProduct(PDO $pdo)
 {
-    requirePurchasePermission('add');
+    requirePurchasePermission(3);
 
     $scope = getScope();
 
@@ -1277,7 +1372,7 @@ function addQuickProduct(PDO $pdo)
 
 function addHsnCode(PDO $pdo)
 {
-    requirePurchasePermission('add');
+    requirePurchasePermission(3);
 
     $scope = getScope();
 

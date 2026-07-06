@@ -13,6 +13,10 @@ requireApiLogin();
 $action = cleanInput($_POST['action'] ?? $_GET['action'] ?? '');
 
 switch ($action) {
+    case 'get_page_context':
+        getExpensePageContext($pdo);
+        break;
+
     case 'list_expenses':
         listExpenses($pdo);
         break;
@@ -74,32 +78,321 @@ function executeExpenseStatement(PDOStatement $stmt, array $params = [])
 }
 
 
-function requireExpensePermission($action = 'view')
+function expenseActionCode($action)
 {
-    if (function_exists('isPlatformOwner') && isPlatformOwner()) {
-        return;
+    if (is_numeric($action)) {
+        return (int)$action;
     }
 
-    /*
-     * Permission fallback:
-     * Different projects may store the expense menu key as expenses / expense / expense_list.
-     * If no permission helper exists, allow the logged-in user.
-     */
-    if (!function_exists('hasPermission')) {
-        return;
+    $map = [
+        'view' => 1,
+        'list' => 2,
+        'add' => 3,
+        'create' => 3,
+        'edit' => 4,
+        'update' => 4,
+        'delete' => 5,
+        'print' => 6,
+        'export' => 7,
+        'cancel' => 18,
+        'download' => 21
+    ];
+
+    $key = strtolower(trim((string)$action));
+
+    return $map[$key] ?? 1;
+}
+
+function expenseActionName($actionCode)
+{
+    $map = [
+        1 => 'view',
+        2 => 'list',
+        3 => 'add',
+        4 => 'edit',
+        5 => 'delete',
+        6 => 'print',
+        7 => 'export',
+        18 => 'cancel',
+        21 => 'download'
+    ];
+
+    return $map[(int)$actionCode] ?? 'view';
+}
+
+function expensePermissionKeys()
+{
+    return ['expenses', 'expense', 'expense_list', 'expense_master'];
+}
+
+function currentRoleIdsForExpensePermission()
+{
+    static $roleIds = null;
+
+    if ($roleIds !== null) {
+        return $roleIds;
     }
 
-    $keys = ['expenses', 'expense', 'expense_list', 'expense_master'];
+    global $pdo;
 
-    foreach ($keys as $key) {
-        if (hasPermission($key, $action)) {
-            return;
+    $roleIds = [];
+
+    if (function_exists('currentRoleId')) {
+        $roleId = (int)currentRoleId();
+        if ($roleId > 0) {
+            $roleIds[] = $roleId;
         }
     }
 
-    jsonResponse(false, 'Permission denied. Please give access for Expenses menu in Roles & Permissions.');
+    foreach (['role_id', 'current_role_id', 'user_role_id'] as $sessionKey) {
+        if (!empty($_SESSION[$sessionKey])) {
+            $roleId = (int)$_SESSION[$sessionKey];
+            if ($roleId > 0) {
+                $roleIds[] = $roleId;
+            }
+        }
+    }
+
+    if (function_exists('currentUserId')) {
+        $userId = (int)currentUserId();
+
+        if ($userId > 0 && isset($pdo) && $pdo instanceof PDO) {
+            try {
+                $stmt = $pdo->prepare("SELECT role_id FROM users WHERE id = :id LIMIT 1");
+                $stmt->execute([':id' => $userId]);
+                $dbRoleId = (int)$stmt->fetchColumn();
+
+                if ($dbRoleId > 0) {
+                    $roleIds[] = $dbRoleId;
+                }
+            } catch (Throwable $e) {
+                // Ignore fallback errors.
+            }
+        }
+    }
+
+    $roleIds = array_values(array_unique(array_filter(array_map('intval', $roleIds))));
+
+    /*
+     * Add parent package role also.
+     */
+    if ($roleIds && isset($pdo) && $pdo instanceof PDO) {
+        try {
+            $holders = [];
+            $params = [];
+
+            foreach ($roleIds as $index => $roleId) {
+                $key = ':role_' . $index;
+                $holders[] = $key;
+                $params[$key] = $roleId;
+            }
+
+            $stmt = $pdo->prepare("
+                SELECT parent_role_id
+                FROM roles
+                WHERE id IN (" . implode(',', $holders) . ")
+                AND parent_role_id IS NOT NULL
+                AND parent_role_id > 0
+            ");
+            $stmt->execute($params);
+
+            foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $parentRoleId) {
+                $parentRoleId = (int)$parentRoleId;
+                if ($parentRoleId > 0) {
+                    $roleIds[] = $parentRoleId;
+                }
+            }
+        } catch (Throwable $e) {
+            // Ignore parent lookup errors.
+        }
+    }
+
+    return array_values(array_unique(array_filter(array_map('intval', $roleIds))));
 }
 
+function expenseRoleBaseMenuRowsExist($moduleKeys)
+{
+    global $pdo;
+
+    if (!isset($pdo) || !($pdo instanceof PDO)) {
+        return false;
+    }
+
+    if (!is_array($moduleKeys)) {
+        $moduleKeys = [$moduleKeys];
+    }
+
+    $moduleKeys = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $moduleKeys)))));
+    $roleIds = currentRoleIdsForExpensePermission();
+
+    if (!$moduleKeys || !$roleIds) {
+        return false;
+    }
+
+    try {
+        $keyHolders = [];
+        $roleHolders = [];
+        $params = [];
+
+        foreach ($moduleKeys as $index => $moduleKey) {
+            $key = ':expense_menu_key_' . $index;
+            $keyHolders[] = $key;
+            $params[$key] = $moduleKey;
+        }
+
+        foreach ($roleIds as $index => $roleId) {
+            $key = ':expense_role_id_' . $index;
+            $roleHolders[] = $key;
+            $params[$key] = $roleId;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT 1
+            FROM role_base_access rba
+            INNER JOIN sidebar_menus sm ON sm.id = rba.menu_id
+            WHERE rba.role_id IN (" . implode(',', $roleHolders) . ")
+            AND sm.menu_key IN (" . implode(',', $keyHolders) . ")
+            LIMIT 1
+        ");
+        $stmt->execute($params);
+
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function expenseRoleBasePermissionAllowed($moduleKeys, $action)
+{
+    global $pdo;
+
+    if (!isset($pdo) || !($pdo instanceof PDO)) {
+        return false;
+    }
+
+    if (!is_array($moduleKeys)) {
+        $moduleKeys = [$moduleKeys];
+    }
+
+    $moduleKeys = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $moduleKeys)))));
+    $roleIds = currentRoleIdsForExpensePermission();
+    $actionCode = expenseActionCode($action);
+
+    if (!$moduleKeys || !$roleIds) {
+        return false;
+    }
+
+    try {
+        $keyHolders = [];
+        $roleHolders = [];
+        $params = [
+            ':action_code' => (string)$actionCode
+        ];
+
+        foreach ($moduleKeys as $index => $moduleKey) {
+            $key = ':expense_allowed_menu_key_' . $index;
+            $keyHolders[] = $key;
+            $params[$key] = $moduleKey;
+        }
+
+        foreach ($roleIds as $index => $roleId) {
+            $key = ':expense_allowed_role_id_' . $index;
+            $roleHolders[] = $key;
+            $params[$key] = $roleId;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT 1
+            FROM role_base_access rba
+            INNER JOIN sidebar_menus sm ON sm.id = rba.menu_id
+            WHERE rba.status = 1
+            AND sm.status = 1
+            AND rba.role_id IN (" . implode(',', $roleHolders) . ")
+            AND sm.menu_key IN (" . implode(',', $keyHolders) . ")
+            AND FIND_IN_SET(:action_code, REPLACE(COALESCE(rba.access_actions, ''), ' ', '')) > 0
+            LIMIT 1
+        ");
+        $stmt->execute($params);
+
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function expenseHasPermissionFallback($moduleKeys, $action)
+{
+    if (!function_exists('hasPermission')) {
+        return false;
+    }
+
+    if (!is_array($moduleKeys)) {
+        $moduleKeys = [$moduleKeys];
+    }
+
+    $actionCode = expenseActionCode($action);
+    $actionName = expenseActionName($actionCode);
+
+    foreach ($moduleKeys as $moduleKey) {
+        if ($moduleKey === '') {
+            continue;
+        }
+
+        try {
+            if (hasPermission($moduleKey, $actionCode) || hasPermission($moduleKey, $actionName)) {
+                return true;
+            }
+        } catch (Throwable $e) {
+            // Continue with next key.
+        }
+    }
+
+    return false;
+}
+
+function expenseCan($action)
+{
+    if (function_exists('isPlatformOwner') && isPlatformOwner()) {
+        return true;
+    }
+
+    $keys = expensePermissionKeys();
+
+    if (expenseRoleBaseMenuRowsExist($keys)) {
+        return expenseRoleBasePermissionAllowed($keys, $action);
+    }
+
+    return expenseHasPermissionFallback($keys, $action);
+}
+
+function requireExpensePermission($action = 'view')
+{
+    if (!expenseCan($action)) {
+        jsonResponse(false, 'Permission denied. Please give access for Expenses menu in Roles & Permissions.');
+    }
+}
+
+function getExpensePageContext(PDO $pdo)
+{
+    if (!expenseCan(1) && !expenseCan(2) && !expenseCan(3) && !expenseCan(4)) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
+    jsonResponse(true, 'Expense page context loaded.', [
+        'context' => [
+            'can_view' => expenseCan(1),
+            'can_list' => expenseCan(2),
+            'can_add' => expenseCan(3),
+            'can_edit' => expenseCan(4),
+            'can_delete' => expenseCan(5),
+            'can_export' => expenseCan(7),
+            'can_cancel' => expenseCan(18),
+            'can_quick_add_category' => expenseCan(3),
+            'page_title' => 'Expenses',
+            'page_note' => 'Expenses controlled by role based permission.'
+        ]
+    ]);
+}
 function getExpenseScope()
 {
     $businessId = (int)currentBusinessId();
@@ -117,7 +410,7 @@ function getExpenseScope()
 
 function getExpenseCategories(PDO $pdo)
 {
-    requireExpensePermission('view');
+    requireExpensePermission(1);
 
     $scope = getExpenseScope();
 
@@ -141,7 +434,7 @@ function getExpenseCategories(PDO $pdo)
 
 function getPaymentModes(PDO $pdo)
 {
-    requireExpensePermission('view');
+    requireExpensePermission(1);
 
     $scope = getExpenseScope();
 
@@ -165,7 +458,7 @@ function getPaymentModes(PDO $pdo)
 
 function quickAddExpenseCategory(PDO $pdo)
 {
-    requireExpensePermission('add');
+    requireExpensePermission(3);
 
     $scope = getExpenseScope();
     $categoryName = cleanInput($_POST['category_name'] ?? '');
@@ -195,7 +488,9 @@ function quickAddExpenseCategory(PDO $pdo)
 
 function listExpenses(PDO $pdo)
 {
-    requireExpensePermission('view');
+    if (!expenseCan(1) && !expenseCan(2)) {
+        jsonResponse(false, 'Permission denied.');
+    }
 
     $scope = getExpenseScope();
     $search = cleanInput($_GET['search'] ?? '');
@@ -292,6 +587,19 @@ function listExpenses(PDO $pdo)
     executeExpenseStatement($stmt, $params);
     $expenses = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+    $canEdit = expenseCan(4);
+    $canDelete = expenseCan(5);
+    $canCancel = expenseCan(18);
+    $canView = expenseCan(1) || expenseCan(2);
+
+    foreach ($expenses as &$expense) {
+        $expense['can_view'] = $canView;
+        $expense['can_edit'] = $canEdit;
+        $expense['can_delete'] = $canDelete;
+        $expense['can_cancel'] = $canCancel;
+    }
+    unset($expense);
+
     $statsWhere = "
         WHERE business_id = :business_id
         AND branch_id = :branch_id
@@ -330,7 +638,9 @@ function listExpenses(PDO $pdo)
 
 function getExpense(PDO $pdo)
 {
-    requireExpensePermission('view');
+    if (!expenseCan(1) && !expenseCan(4)) {
+        jsonResponse(false, 'Permission denied.');
+    }
 
     $scope = getExpenseScope();
     $expenseId = (int)($_GET['expense_id'] ?? 0);
@@ -390,7 +700,7 @@ function saveExpense(PDO $pdo)
     $scope = getExpenseScope();
     $expenseId = (int)($_POST['expense_id'] ?? 0);
 
-    requireExpensePermission($expenseId > 0 ? 'edit' : 'add');
+    requireExpensePermission($expenseId > 0 ? 4 : 3);
 
     $expenseDate = expenseCleanDate($_POST['expense_date'] ?? '');
     $categoryId = (int)($_POST['category_id'] ?? 0);
@@ -559,7 +869,7 @@ function saveExpense(PDO $pdo)
 
 function deleteExpense(PDO $pdo)
 {
-    requireExpensePermission('delete');
+    requireExpensePermission(5);
 
     $scope = getExpenseScope();
     $expenseId = (int)($_POST['expense_id'] ?? 0);
@@ -603,7 +913,7 @@ function deleteExpense(PDO $pdo)
 
 function cancelExpense(PDO $pdo)
 {
-    requireExpensePermission('edit');
+    requireExpensePermission(18);
 
     $scope = getExpenseScope();
     $expenseId = (int)($_POST['expense_id'] ?? 0);

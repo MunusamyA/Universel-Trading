@@ -34,27 +34,311 @@ switch ($action) {
         jsonResponse(false, 'Invalid action.');
 }
 
-function requireSettingsPermission($action = 'view') {
-    if (isPlatformOwner()) {
-        return;
+function settingsActionCode($action)
+{
+    if (is_numeric($action)) {
+        return (int)$action;
     }
 
-    /*
-     * Keep both keys supported.
-     */
-    $permissionKeys = ['settings', 'business_settings'];
+    $map = [
+        'view' => 1,
+        'list' => 2,
+        'add' => 3,
+        'create' => 3,
+        'edit' => 4,
+        'update' => 4,
+        'delete' => 5,
+        'print' => 6,
+        'export' => 7,
+        'download' => 21
+    ];
 
-    if (function_exists('hasPermission')) {
-        foreach ($permissionKeys as $key) {
-            if (hasPermission($key, $action)) {
-                return;
+    $key = strtolower(trim((string)$action));
+
+    return $map[$key] ?? 1;
+}
+
+function settingsActionName($actionCode)
+{
+    $map = [
+        1 => 'view',
+        2 => 'list',
+        3 => 'add',
+        4 => 'edit',
+        5 => 'delete',
+        6 => 'print',
+        7 => 'export',
+        21 => 'download'
+    ];
+
+    return $map[(int)$actionCode] ?? 'view';
+}
+
+function settingsPermissionKeys()
+{
+    return ['settings', 'business_settings', 'general_settings', 'branch_settings'];
+}
+
+function currentRoleIdsForSettingsPermission()
+{
+    static $roleIds = null;
+
+    if ($roleIds !== null) {
+        return $roleIds;
+    }
+
+    global $pdo;
+
+    $roleIds = [];
+
+    if (function_exists('currentRoleId')) {
+        $roleId = (int)currentRoleId();
+        if ($roleId > 0) {
+            $roleIds[] = $roleId;
+        }
+    }
+
+    foreach (['role_id', 'current_role_id', 'user_role_id'] as $sessionKey) {
+        if (!empty($_SESSION[$sessionKey])) {
+            $roleId = (int)$_SESSION[$sessionKey];
+            if ($roleId > 0) {
+                $roleIds[] = $roleId;
             }
         }
+    }
 
+    if (function_exists('currentUserId')) {
+        $userId = (int)currentUserId();
+
+        if ($userId > 0 && isset($pdo) && $pdo instanceof PDO) {
+            try {
+                $stmt = $pdo->prepare("SELECT role_id FROM users WHERE id = :id LIMIT 1");
+                $stmt->execute([':id' => $userId]);
+                $dbRoleId = (int)$stmt->fetchColumn();
+
+                if ($dbRoleId > 0) {
+                    $roleIds[] = $dbRoleId;
+                }
+            } catch (Throwable $e) {
+                // Ignore fallback errors.
+            }
+        }
+    }
+
+    $roleIds = array_values(array_unique(array_filter(array_map('intval', $roleIds))));
+
+    /*
+     * Add parent package role also.
+     */
+    if ($roleIds && isset($pdo) && $pdo instanceof PDO) {
+        try {
+            $holders = [];
+            $params = [];
+
+            foreach ($roleIds as $index => $roleId) {
+                $key = ':role_' . $index;
+                $holders[] = $key;
+                $params[$key] = $roleId;
+            }
+
+            $stmt = $pdo->prepare("
+                SELECT parent_role_id
+                FROM roles
+                WHERE id IN (" . implode(',', $holders) . ")
+                AND parent_role_id IS NOT NULL
+                AND parent_role_id > 0
+            ");
+            $stmt->execute($params);
+
+            foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $parentRoleId) {
+                $parentRoleId = (int)$parentRoleId;
+                if ($parentRoleId > 0) {
+                    $roleIds[] = $parentRoleId;
+                }
+            }
+        } catch (Throwable $e) {
+            // Ignore parent lookup errors.
+        }
+    }
+
+    return array_values(array_unique(array_filter(array_map('intval', $roleIds))));
+}
+
+function settingsRoleBaseMenuRowsExist($moduleKeys)
+{
+    global $pdo;
+
+    if (!isset($pdo) || !($pdo instanceof PDO)) {
+        return false;
+    }
+
+    if (!is_array($moduleKeys)) {
+        $moduleKeys = [$moduleKeys];
+    }
+
+    $moduleKeys = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $moduleKeys)))));
+    $roleIds = currentRoleIdsForSettingsPermission();
+
+    if (!$moduleKeys || !$roleIds) {
+        return false;
+    }
+
+    try {
+        $keyHolders = [];
+        $roleHolders = [];
+        $params = [];
+
+        foreach ($moduleKeys as $index => $moduleKey) {
+            $key = ':settings_menu_key_' . $index;
+            $keyHolders[] = $key;
+            $params[$key] = $moduleKey;
+        }
+
+        foreach ($roleIds as $index => $roleId) {
+            $key = ':settings_role_id_' . $index;
+            $roleHolders[] = $key;
+            $params[$key] = $roleId;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT 1
+            FROM role_base_access rba
+            INNER JOIN sidebar_menus sm ON sm.id = rba.menu_id
+            WHERE rba.role_id IN (" . implode(',', $roleHolders) . ")
+            AND sm.menu_key IN (" . implode(',', $keyHolders) . ")
+            LIMIT 1
+        ");
+        $stmt->execute($params);
+
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function settingsRoleBasePermissionAllowed($moduleKeys, $action)
+{
+    global $pdo;
+
+    if (!isset($pdo) || !($pdo instanceof PDO)) {
+        return false;
+    }
+
+    if (!is_array($moduleKeys)) {
+        $moduleKeys = [$moduleKeys];
+    }
+
+    $moduleKeys = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $moduleKeys)))));
+    $roleIds = currentRoleIdsForSettingsPermission();
+    $actionCode = settingsActionCode($action);
+
+    if (!$moduleKeys || !$roleIds) {
+        return false;
+    }
+
+    try {
+        $keyHolders = [];
+        $roleHolders = [];
+        $params = [
+            ':action_code' => (string)$actionCode
+        ];
+
+        foreach ($moduleKeys as $index => $moduleKey) {
+            $key = ':settings_allowed_menu_key_' . $index;
+            $keyHolders[] = $key;
+            $params[$key] = $moduleKey;
+        }
+
+        foreach ($roleIds as $index => $roleId) {
+            $key = ':settings_allowed_role_id_' . $index;
+            $roleHolders[] = $key;
+            $params[$key] = $roleId;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT 1
+            FROM role_base_access rba
+            INNER JOIN sidebar_menus sm ON sm.id = rba.menu_id
+            WHERE rba.status = 1
+            AND sm.status = 1
+            AND rba.role_id IN (" . implode(',', $roleHolders) . ")
+            AND sm.menu_key IN (" . implode(',', $keyHolders) . ")
+            AND FIND_IN_SET(:action_code, REPLACE(COALESCE(rba.access_actions, ''), ' ', '')) > 0
+            LIMIT 1
+        ");
+        $stmt->execute($params);
+
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function settingsHasPermissionFallback($moduleKeys, $action)
+{
+    if (!function_exists('hasPermission')) {
+        return false;
+    }
+
+    if (!is_array($moduleKeys)) {
+        $moduleKeys = [$moduleKeys];
+    }
+
+    $actionCode = settingsActionCode($action);
+    $actionName = settingsActionName($actionCode);
+
+    foreach ($moduleKeys as $moduleKey) {
+        if ($moduleKey === '') {
+            continue;
+        }
+
+        try {
+            if (hasPermission($moduleKey, $actionCode) || hasPermission($moduleKey, $actionName)) {
+                return true;
+            }
+        } catch (Throwable $e) {
+            // Continue with next key.
+        }
+    }
+
+    return false;
+}
+
+function settingsCan($action)
+{
+    if (function_exists('isPlatformOwner') && isPlatformOwner()) {
+        return true;
+    }
+
+    $keys = settingsPermissionKeys();
+
+    if (settingsRoleBaseMenuRowsExist($keys)) {
+        return settingsRoleBasePermissionAllowed($keys, $action);
+    }
+
+    return settingsHasPermissionFallback($keys, $action);
+}
+
+function requireSettingsPermission($action = 'view')
+{
+    if (!settingsCan($action)) {
         jsonResponse(false, 'Permission denied.');
     }
 }
 
+function settingsPermissionContext()
+{
+    return [
+        'can_view' => settingsCan(1) || settingsCan(4),
+        'can_edit' => settingsCan(4),
+        'can_refresh' => settingsCan(1) || settingsCan(4),
+        'can_business_edit' => settingsCan(4),
+        'can_branch_edit' => settingsCan(4),
+        'can_general_edit' => settingsCan(4),
+        'page_title' => 'Settings',
+        'page_note' => 'Settings controlled by role based permission.'
+    ];
+}
 function getScope() {
     $businessId = (int)currentBusinessId();
     $branchId = (int)currentBranchId();
@@ -85,7 +369,9 @@ function defaultSettings() {
 }
 
 function getSettings(PDO $pdo) {
-    requireSettingsPermission('view');
+    if (!settingsCan(1) && !settingsCan(4)) {
+        jsonResponse(false, 'Permission denied.');
+    }
     $scope = getScope();
 
     $businessStmt = $pdo->prepare("
@@ -136,12 +422,13 @@ function getSettings(PDO $pdo) {
         'business' => $business,
         'branch' => $branch,
         'settings' => $settings,
-        'stats' => $stats
+        'stats' => $stats,
+        'context' => settingsPermissionContext()
     ]);
 }
 
 function saveBusinessProfile(PDO $pdo) {
-    requireSettingsPermission('edit');
+    requireSettingsPermission(4);
     $scope = getScope();
 
     $businessName = cleanInput($_POST['business_name'] ?? '');
@@ -234,7 +521,7 @@ function saveBusinessProfile(PDO $pdo) {
 }
 
 function saveBranchProfile(PDO $pdo) {
-    requireSettingsPermission('edit');
+    requireSettingsPermission(4);
     $scope = getScope();
 
     $branchName = cleanInput($_POST['branch_name'] ?? '');
@@ -284,7 +571,7 @@ function saveBranchProfile(PDO $pdo) {
 }
 
 function saveGeneralSettings(PDO $pdo) {
-    requireSettingsPermission('edit');
+    requireSettingsPermission(4);
     $scope = getScope();
 
     $currency = cleanInput($_POST['currency'] ?? 'INR');

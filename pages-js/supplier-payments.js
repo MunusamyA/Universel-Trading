@@ -8,11 +8,26 @@ $(document).ready(function () {
     let supplierSummary = {};
     let isEditMode = false;
 
-    loadSuppliers();
-    loadPaymentModes();
+    let pageContext = {
+        can_view: false,
+        can_list: false,
+        can_add: false,
+        can_edit: false,
+        can_cancel: false,
+        can_delete: false,
+        can_ledger: false,
+        can_back: false,
+        page_title: 'Supplier Payments',
+        page_note: '',
+        ledger_url: '',
+        back_url: ''
+    };
+
+    loadPageContext();
 
     $('#supplier_id').on('change', function () {
         isEditMode = false;
+        applyPageContext();
         loadSupplierData(function () {
             applyPaymentTypeRules(true);
         });
@@ -45,6 +60,18 @@ $(document).ready(function () {
 
     $('#supplierPaymentForm').on('submit', function (e) {
         e.preventDefault();
+
+        let paymentId = parseInt($('#payment_id').val() || 0);
+
+        if (paymentId > 0 && !pageContext.can_edit) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
+        if (paymentId <= 0 && !pageContext.can_add) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
 
         if (!validateForm()) {
             return;
@@ -86,20 +113,104 @@ $(document).ready(function () {
     $('#refreshPaymentsBtn, #statusFilter, #fromDate, #toDate').on('click change', loadPayments);
 
     $(document).on('click', '.edit-payment-btn', function () {
+        if (!pageContext.can_edit || $(this).hasClass('disabled')) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         loadPaymentForEdit($(this).data('id'));
     });
 
     $(document).on('click', '.cancel-payment-btn', function () {
+        if (!pageContext.can_cancel || $(this).hasClass('disabled')) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         let id = $(this).data('id');
         if (!confirm('Cancel this payment?')) return;
         paymentAction('cancel_payment', id);
     });
 
     $(document).on('click', '.delete-payment-btn', function () {
+        if (!pageContext.can_delete || $(this).hasClass('disabled')) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         let id = $(this).data('id');
         if (!confirm('Delete this payment permanently?')) return;
         paymentAction('delete_payment', id);
     });
+
+    function loadPageContext() {
+        $.ajax({
+            url: window.BASE_URL + 'api/supplier-payments.php',
+            type: 'GET',
+            dataType: 'json',
+            data: {
+                action: 'get_page_context'
+            },
+            success: function (response) {
+                if (response.status === true) {
+                    pageContext = response.data.context || pageContext;
+                    applyPageContext();
+                    loadSuppliers();
+                    loadPaymentModes();
+                } else {
+                    $('#paymentsTableBody').html('<tr><td colspan="10" class="text-center text-danger">' + escapeHtml(response.message || 'Permission denied.') + '</td></tr>');
+                    $('#paymentEntryCard').addClass('d-none');
+                    $('#ledgerBtn').addClass('d-none');
+                    $('#backBtn').addClass('d-none');
+                }
+            },
+            error: function (xhr) {
+                console.log(xhr.responseText);
+                $('#paymentsTableBody').html('<tr><td colspan="10" class="text-center text-danger">Server error.</td></tr>');
+                $('#paymentEntryCard').addClass('d-none');
+                $('#ledgerBtn').addClass('d-none');
+                $('#backBtn').addClass('d-none');
+            }
+        });
+    }
+
+    function applyPageContext() {
+        $('#pageTitleText').text(pageContext.page_title || 'Supplier Payments');
+        $('#pageNoteText').text(pageContext.page_note || '');
+
+        if (pageContext.ledger_url) {
+            let ledgerUrl = pageContext.ledger_url;
+            let supplierId = parseInt($('#supplier_id').val() || window.PRE_SUPPLIER_ID || 0);
+
+            if (supplierId > 0) {
+                ledgerUrl += '?supplier_id=' + supplierId;
+            }
+
+            $('#ledgerBtn').attr('href', ledgerUrl);
+        }
+
+        if (pageContext.back_url) {
+            $('#backBtn').attr('href', pageContext.back_url);
+        }
+
+        if (pageContext.can_ledger) {
+            $('#ledgerBtn').removeClass('d-none');
+        } else {
+            $('#ledgerBtn').addClass('d-none');
+        }
+
+        if (pageContext.can_back) {
+            $('#backBtn').removeClass('d-none');
+        } else {
+            $('#backBtn').addClass('d-none');
+        }
+
+        if (pageContext.can_add || pageContext.can_edit) {
+            $('#paymentEntryCard').removeClass('d-none');
+        } else {
+            $('#paymentEntryCard').addClass('d-none');
+        }
+    }
 
     function loadSuppliers() {
         $.ajax({
@@ -318,7 +429,7 @@ $(document).ready(function () {
         renderSplits();
         renderSplitTotals();
 
-        $('#savePaymentBtn').prop('disabled', supplierId <= 0 || !allowSubmit);
+        $('#savePaymentBtn').prop('disabled', supplierId <= 0 || !allowSubmit || (!pageContext.can_add && !pageContext.can_edit));
     }
 
     function protectAmountLimit() {
@@ -351,6 +462,11 @@ $(document).ready(function () {
     }
 
     function loadPayments() {
+        if (!pageContext.can_list) {
+            $('#paymentsTableBody').html('<tr><td colspan="10" class="text-center text-danger">Permission denied.</td></tr>');
+            return;
+        }
+
         $.ajax({
             url: window.BASE_URL + 'api/supplier-payments.php',
             type: 'GET',
@@ -388,41 +504,51 @@ $(document).ready(function () {
             let isCancelled = parseInt(row.status || 0) === 2;
             let isPurchaseForm = (row.source_type || '') === 'purchase_form';
 
-            html += `
-                <tr>
-                    <td>${index + 1}</td>
-                    <td>
-                        <h6 class="mb-0">${escapeHtml(row.payment_no || '')}</h6>
-                        <small class="text-muted">${escapeHtml(row.source_type || '')}</small>
-                    </td>
-                    <td>${escapeHtml(row.payment_date || '')}</td>
-                    <td>${escapeHtml(row.supplier_name || '')}</td>
-                    <td>${paymentTypeText(row.payment_type)}</td>
-                    <td>₹${numberFormat(row.total_amount || 0)}</td>
-                    <td><small>${escapeHtml(row.split_summary || '-')}</small></td>
-                    <td><small>${escapeHtml(row.allocation_summary || '-')}</small></td>
-                    <td>${isCancelled ? '<span class="badge bg-danger">Cancelled</span>' : '<span class="badge bg-success">Active</span>'}</td>
-                    <td>
-                        <div class="btn-group btn-group-sm">
-                            <button type="button" class="btn btn-outline-primary edit-payment-btn ${isCancelled || isPurchaseForm ? 'disabled' : ''}" data-id="${row.id}" title="${isPurchaseForm ? 'Edit from purchase form' : 'Edit'}">
-                                <i class="mdi mdi-pencil"></i>
-                            </button>
-                            <button type="button" class="btn btn-outline-warning cancel-payment-btn ${isCancelled ? 'disabled' : ''}" data-id="${row.id}" title="Cancel">
-                                <i class="mdi mdi-cancel"></i>
-                            </button>
-                            <button type="button" class="btn btn-outline-danger delete-payment-btn" data-id="${row.id}" title="Delete">
-                                <i class="mdi mdi-delete"></i>
-                            </button>
-                        </div>
-                    </td>
-                </tr>
-            `;
+            let canEditRow = (row.can_edit === true || row.can_edit === 1 || row.can_edit === '1') && !isCancelled && !isPurchaseForm;
+            let canCancelRow = (row.can_cancel === true || row.can_cancel === 1 || row.can_cancel === '1') && !isCancelled;
+            let canDeleteRow = (row.can_delete === true || row.can_delete === 1 || row.can_delete === '1');
+
+            let actionHtml = '';
+
+            if (canEditRow) {
+                actionHtml += '<button type="button" class="btn btn-outline-primary btn-sm edit-payment-btn" data-id="' + row.id + '" title="Edit"><i class="mdi mdi-pencil"></i></button>';
+            }
+
+            if (canCancelRow) {
+                actionHtml += '<button type="button" class="btn btn-outline-warning btn-sm cancel-payment-btn ms-1" data-id="' + row.id + '" title="Cancel"><i class="mdi mdi-cancel"></i></button>';
+            }
+
+            if (canDeleteRow) {
+                actionHtml += '<button type="button" class="btn btn-outline-danger btn-sm delete-payment-btn ms-1" data-id="' + row.id + '" title="Delete"><i class="mdi mdi-delete"></i></button>';
+            }
+
+            if (actionHtml === '') {
+                actionHtml = '<span class="text-muted">No access</span>';
+            }
+
+            html += '<tr>';
+            html += '<td>' + (index + 1) + '</td>';
+            html += '<td><h6 class="mb-0">' + escapeHtml(row.payment_no || '') + '</h6><small class="text-muted">' + escapeHtml(row.source_type || '') + '</small></td>';
+            html += '<td>' + escapeHtml(row.payment_date || '') + '</td>';
+            html += '<td>' + escapeHtml(row.supplier_name || '') + '</td>';
+            html += '<td>' + paymentTypeText(row.payment_type) + '</td>';
+            html += '<td>₹' + numberFormat(row.total_amount || 0) + '</td>';
+            html += '<td><small>' + escapeHtml(row.split_summary || '-') + '</small></td>';
+            html += '<td><small>' + escapeHtml(row.allocation_summary || '-') + '</small></td>';
+            html += '<td>' + (isCancelled ? '<span class="badge bg-danger">Cancelled</span>' : '<span class="badge bg-success">Active</span>') + '</td>';
+            html += '<td><div class="btn-group btn-group-sm">' + actionHtml + '</div></td>';
+            html += '</tr>';
         });
 
         $('#paymentsTableBody').html(html);
     }
 
     function loadPaymentForEdit(paymentId) {
+        if (!pageContext.can_edit) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         $.ajax({
             url: window.BASE_URL + 'api/supplier-payments.php',
             type: 'GET',
@@ -476,6 +602,16 @@ $(document).ready(function () {
     }
 
     function paymentAction(action, paymentId) {
+        if (action === 'cancel_payment' && !pageContext.can_cancel) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
+        if (action === 'delete_payment' && !pageContext.can_delete) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         $.ajax({
             url: window.BASE_URL + 'api/supplier-payments.php',
             type: 'POST',

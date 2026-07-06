@@ -18,12 +18,7 @@ $page_title = "Roles & Permissions | Universal Trading";
 
 <body data-sidebar="dark">
 
-<?php
-$preloaderPath = BASE_PATH . 'includes/pre-loader.php';
-if (file_exists($preloaderPath)) {
-    include $preloaderPath;
-}
-?>
+<?php include BASE_PATH . 'includes/pre-loader.php'; ?>
 
 <div id="layout-wrapper">
 
@@ -42,23 +37,15 @@ if (file_exists($preloaderPath)) {
 
                 <div class="row">
                     <div class="col-12">
-
                         <div class="page-title-box d-flex align-items-center justify-content-between">
-
-                            <div>
-                                <h4 class="mb-0" id="pageTitleText">Roles & Permissions</h4>
-                                <p class="text-muted mb-0 mt-1" id="pageSubTitleText">Loading...</p>
-                            </div>
+                            <h4 class="mb-0">Roles & Permissions</h4>
 
                             <div class="page-title-right">
-                                <button type="button" class="btn btn-primary waves-effect waves-light d-none" id="addRoleBtn">
-                                    <i class="mdi mdi-plus me-1"></i>
-                                    <span id="addRoleBtnText">Add Role</span>
+                                <button type="button" class="btn btn-primary waves-effect waves-light" id="addRoleBtn">
+                                    <i class="mdi mdi-plus me-1"></i> Add Role
                                 </button>
                             </div>
-
                         </div>
-
                     </div>
                 </div>
 
@@ -95,7 +82,7 @@ if (file_exists($preloaderPath)) {
                         <div class="card text-center">
                             <div class="mb-2 card-body text-muted">
                                 <h3 class="text-info mt-2" id="menuCount">0</h3>
-                                Permission Menus
+                                Sidebar Menus
                             </div>
                         </div>
                     </div>
@@ -108,16 +95,7 @@ if (file_exists($preloaderPath)) {
                         <div class="card">
                             <div class="card-body">
 
-                                <div class="d-flex align-items-center justify-content-between mb-3">
-                                    <div>
-                                        <h4 class="card-title mb-1">Role List</h4>
-                                        <p class="card-title-desc mb-0" id="roleListNote">Loading...</p>
-                                    </div>
-
-                                    <button type="button" class="btn btn-light btn-sm" id="refreshRolesBtn">
-                                        <i class="mdi mdi-refresh me-1"></i> Refresh
-                                    </button>
-                                </div>
+                                <h4 class="card-title mb-3">Role List</h4>
 
                                 <div class="table-responsive">
                                     <table class="table table-centered table-nowrap mb-0">
@@ -170,10 +148,6 @@ if (file_exists($preloaderPath)) {
 
                 <div class="modal-body" style="max-height: calc(100vh - 190px); overflow-y: auto;">
 
-                    <div class="alert alert-info" id="roleModalNote">
-                        Loading permission control...
-                    </div>
-
                     <div class="row">
 
                         <div class="col-lg-6 col-md-12">
@@ -201,19 +175,11 @@ if (file_exists($preloaderPath)) {
                     </div>
 
                     <div class="d-flex align-items-center justify-content-between mb-2">
-                        <div>
-                            <h5 class="mb-0">Menu Permissions</h5>
-                            <small class="text-muted" id="permissionSourceNote">Loading...</small>
-                        </div>
+                        <h5 class="mb-0">Menu Permissions</h5>
 
                         <div>
-                            <button type="button" class="btn btn-light btn-sm" id="checkViewListOnly">
-                                View/List Only
-                            </button>
-
-                            <button type="button" class="btn btn-light btn-sm" id="checkAllPermissions">
-                                Check All
-                            </button>
+                            <button type="button" class="btn btn-light btn-sm" id="checkViewListOnly">View/List Only</button>
+                            <button type="button" class="btn btn-light btn-sm" id="checkAllPermissions">Check All</button>
                         </div>
                     </div>
 
@@ -225,12 +191,9 @@ if (file_exists($preloaderPath)) {
                                     <th>Allowed Actions</th>
                                 </tr>
                             </thead>
-
                             <tbody id="permissionTableBody">
                                 <tr>
-                                    <td colspan="2" class="text-center text-muted">
-                                        Loading permissions...
-                                    </td>
+                                    <td colspan="2" class="text-center text-muted">Select role to load permissions.</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -238,7 +201,8 @@ if (file_exists($preloaderPath)) {
 
                     <div class="mt-2 text-muted">
                         <small>
-                            Database stores only action numbers like <b>1,2,3</b>. Names are shown only in UI.
+                            Actions are shown as numbers from <b>sidebar_menus.allowed_actions</b>.
+                            Meaning is stored in database column comment.
                         </small>
                     </div>
 
@@ -266,22 +230,13 @@ if (file_exists($rightSidebarPath1)) {
 }
 ?>
 
-<?php
-$scriptsPath1 = BASE_PATH . 'includes/scripts.php';
-$scriptsPath2 = BASE_PATH . 'includes/script.php';
-
-if (file_exists($scriptsPath1)) {
-    include $scriptsPath1;
-} elseif (file_exists($scriptsPath2)) {
-    include $scriptsPath2;
-}
-?>
+<?php include BASE_PATH . 'includes/scripts.php'; ?>
 
 <script>
     window.BASE_URL = <?= json_encode(BASE_URL); ?>;
+    window.USER_TYPE = <?= json_encode(currentUserType()); ?>;
 </script>
-
-<script src="<?= BASE_URL; ?>pages-js/roles.js?v=<?= time(); ?>"></script>
+<script src="<?= BASE_URL; ?>pages-js/roles.js"></script>
 
 </body>
 </html>

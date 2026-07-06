@@ -3,7 +3,18 @@ $(document).ready(function () {
 
     let searchTimer = null;
 
-    loadDailyLedgerReport();
+    let pageContext = {
+        can_view: false,
+        can_list: false,
+        can_print: false,
+        can_export: false,
+        can_generate_report: false,
+        allowed_entry_types: ['sales', 'customer_payment', 'purchase', 'supplier_payment', 'expense']
+    };
+
+    const allEntryTypes = ['sales', 'customer_payment', 'purchase', 'supplier_payment', 'expense'];
+
+    loadPageContext();
 
     $('#loadReportBtn, #fromDate, #toDate').on('click change', loadDailyLedgerReport);
 
@@ -17,7 +28,80 @@ $(document).ready(function () {
         searchTimer = setTimeout(loadDailyLedgerReport, 400);
     });
 
+    function loadPageContext() {
+        $.ajax({
+            url: window.BASE_URL + 'api/daily-ledger-report.php',
+            type: 'GET',
+            dataType: 'json',
+            data: {
+                action: 'get_page_context'
+            },
+            success: function (response) {
+                if (response.status === true) {
+                    pageContext = response.data.context || pageContext;
+                    applyPageContext();
+                    loadDailyLedgerReport();
+                } else {
+                    $('#ledgerReportBody').html('<tr><td colspan="11" class="text-center text-danger">' + escapeHtml(response.message || 'Permission denied.') + '</td></tr>');
+                    $('#dateSummaryBody').html('<tr><td colspan="8" class="text-center text-muted">No data.</td></tr>');
+                    showToastSafe('error', response.message || 'Permission denied.');
+                }
+            },
+            error: function (xhr) {
+                console.log(xhr.responseText);
+                $('#ledgerReportBody').html('<tr><td colspan="11" class="text-center text-danger">Server error.</td></tr>');
+                $('#dateSummaryBody').html('<tr><td colspan="8" class="text-center text-danger">Server error.</td></tr>');
+            }
+        });
+    }
+
+    function applyPageContext() {
+        let allowed = pageContext.allowed_entry_types || [];
+
+        if (!allowed.length) {
+            $('.ledger-type-check').prop('checked', false).prop('disabled', true);
+            $('#loadReportBtn').prop('disabled', true);
+            $('#printReportBtn').addClass('d-none');
+            return;
+        }
+
+        $.each(allEntryTypes, function (_, type) {
+            let checkbox = $('.ledger-type-item[value="' + type + '"]');
+            let wrapper = checkbox.closest('.form-check');
+
+            if ($.inArray(type, allowed) !== -1) {
+                checkbox.prop('disabled', false).prop('checked', true);
+                wrapper.removeClass('d-none');
+            } else {
+                checkbox.prop('disabled', true).prop('checked', false);
+                wrapper.addClass('d-none');
+            }
+        });
+
+        if (allowed.length > 1) {
+            $('#typeAll').closest('.form-check').removeClass('d-none');
+            $('#typeAll').prop('disabled', false).prop('checked', true);
+        } else {
+            $('#typeAll').closest('.form-check').addClass('d-none');
+            $('#typeAll').prop('disabled', true).prop('checked', false);
+        }
+
+        if (pageContext.can_print) {
+            $('#printReportBtn').removeClass('d-none');
+        } else {
+            $('#printReportBtn').addClass('d-none');
+        }
+
+        $('#loadReportBtn').prop('disabled', false);
+    }
+
     function loadDailyLedgerReport() {
+        if (!pageContext.can_view && !pageContext.can_list) {
+            $('#ledgerReportBody').html('<tr><td colspan="11" class="text-center text-danger">Permission denied.</td></tr>');
+            $('#dateSummaryBody').html('<tr><td colspan="8" class="text-center text-muted">No data.</td></tr>');
+            return;
+        }
+
         $('#ledgerReportBody').html('<tr><td colspan="11" class="text-center text-muted">Loading...</td></tr>');
         $('#dateSummaryBody').html('<tr><td colspan="8" class="text-center text-muted">Loading...</td></tr>');
 
@@ -34,6 +118,10 @@ $(document).ready(function () {
             },
             success: function (response) {
                 if (response.status === true) {
+                    if (response.data.allowed_entry_types) {
+                        pageContext.allowed_entry_types = response.data.allowed_entry_types;
+                    }
+
                     renderSummary(response.data.summary || {});
                     renderDateSummary(response.data.date_summary || []);
                     renderRows(response.data.rows || []);
@@ -155,43 +243,60 @@ $(document).ready(function () {
 
     function getSelectedTypes() {
         let selected = [];
+        let allowed = pageContext.allowed_entry_types || [];
 
-        $('.ledger-type-item:checked').each(function () {
-            selected.push($(this).val());
+        $('.ledger-type-item:checked:not(:disabled)').each(function () {
+            let value = $(this).val();
+
+            if ($.inArray(value, allowed) !== -1) {
+                selected.push(value);
+            }
         });
 
         if (selected.length === 0) {
-            // Keep report safe: if user removes all, auto select all.
-            $('#typeAll').prop('checked', true);
-            $('.ledger-type-item').prop('checked', true);
-            selected = ['sales', 'customer_payment', 'purchase', 'supplier_payment', 'expense'];
+            selected = allowed.slice();
+
+            $('.ledger-type-item').each(function () {
+                let value = $(this).val();
+                $(this).prop('checked', $.inArray(value, selected) !== -1);
+            });
+
+            $('#typeAll').prop('checked', selected.length > 1);
         }
 
         return selected;
     }
 
     function syncTypeCheckboxes(changedBox) {
+        let allowed = pageContext.allowed_entry_types || [];
+
         if (changedBox.attr('id') === 'typeAll') {
             let checked = changedBox.is(':checked');
-            $('.ledger-type-item').prop('checked', checked);
+
+            $('.ledger-type-item:not(:disabled)').each(function () {
+                let value = $(this).val();
+
+                if ($.inArray(value, allowed) !== -1) {
+                    $(this).prop('checked', checked);
+                }
+            });
 
             if (!checked) {
-                // Prevent blank report by keeping all selected.
                 $('#typeAll').prop('checked', true);
-                $('.ledger-type-item').prop('checked', true);
+                $('.ledger-type-item:not(:disabled)').prop('checked', true);
             }
             return;
         }
 
-        let totalItems = $('.ledger-type-item').length;
-        let checkedItems = $('.ledger-type-item:checked').length;
+        let totalItems = $('.ledger-type-item:not(:disabled)').length;
+        let checkedItems = $('.ledger-type-item:not(:disabled):checked').length;
 
         if (checkedItems === 0) {
             changedBox.prop('checked', true);
             checkedItems = 1;
         }
 
-        $('#typeAll').prop('checked', checkedItems === totalItems);
+        $('#typeAll').prop('checked', checkedItems === totalItems && totalItems > 1);
     }
 
     function typeLabel(type) {
@@ -221,6 +326,11 @@ $(document).ready(function () {
     function showToastSafe(type, message) {
         if (typeof showToast === 'function') {
             showToast(type, message, 5000);
+            return;
+        }
+
+        if (typeof showAppToast === 'function') {
+            showAppToast(type, message);
             return;
         }
 

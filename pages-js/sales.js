@@ -74,9 +74,18 @@ $(document).ready(function () {
                     config.document_types = response.data.document_types || {};
                     config.allowed_document_types = response.data.allowed_document_types || [];
                     config.permissions = response.data.permissions || {};
+                    config.can_view = response.data.can_view || false;
+                    config.can_list = response.data.can_list || false;
+                    config.can_add = response.data.can_add || false;
+                    config.can_edit = response.data.can_edit || false;
+                    config.can_quick_add_customer = response.data.can_quick_add_customer || false;
+                    config.can_view_customers = response.data.can_view_customers || false;
+                    config.can_hold_bill = response.data.can_hold_bill || false;
+                    config.can_clear_draft = response.data.can_clear_draft || false;
                     window.SALES_PAGE_CONFIG = config;
 
                     renderDocumentTypeDropdown();
+                    applySalesPagePermissionControls();
                     initSalesPageMode();
                 } else {
                     $('#documentType').html('<option value="">No Permission</option>');
@@ -94,8 +103,21 @@ $(document).ready(function () {
     function renderDocumentTypeDropdown(selectedType) {
         let config = getSalesPageConfig();
         let types = config.document_types || {};
-        let allowed = config.allowed_document_types || [];
+        let allowed = (config.allowed_document_types || []).map(function (v) {
+            return parseInt(v);
+        });
+        let mode = config.mode || 'new';
+        let selected = parseInt(selectedType || config.target_type || 0);
         let html = '';
+
+        /*
+         * Split permission:
+         * New document dropdown = Add permission only.
+         * Convert/generate mode = show target only when SOURCE document generate permission exists.
+         */
+        if (mode === 'convert' && selected > 0 && canGenerateCurrentTargetDocument(selected) && $.inArray(selected, allowed) === -1) {
+            allowed.push(selected);
+        }
 
         $.each(allowed, function (_, typeId) {
             let info = types[typeId] || types[String(typeId)] || {};
@@ -108,8 +130,8 @@ $(document).ready(function () {
 
         $('#documentType').html(html);
 
-        if (selectedType) {
-            $('#documentType').val(String(selectedType));
+        if (selected > 0) {
+            $('#documentType').val(String(selected));
         }
 
         if (!$('#documentType').val() && allowed.length > 0) {
@@ -117,6 +139,7 @@ $(document).ready(function () {
         }
 
         syncSwitchControls();
+        applySalesPagePermissionControls();
     }
 
     function getSalesPageConfig() {
@@ -131,6 +154,167 @@ $(document).ready(function () {
         };
     }
 
+    function getGlobalPermission(key) {
+        let config = getSalesPageConfig();
+        let value = config[key];
+
+        return value === true || value === 1 || value === '1';
+    }
+
+    function hasAnyDocPermission(action) {
+        for (let typeId = 1; typeId <= 5; typeId++) {
+            if (docPermission(typeId, action)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    function hasAnySalesCreateOrGeneratePermission() {
+        return hasAnyDocPermission('add')
+            || hasAnyDocPermission('generate_invoice')
+            || hasAnyDocPermission('generate_proforma_bill')
+            || hasAnyDocPermission('generate_sales_bill');
+    }
+
+    function generateActionKeysForTarget(typeId) {
+        typeId = parseInt(typeId || 0);
+
+        if (typeId === 2) {
+            return ['generate_proforma_bill'];
+        }
+
+        if (typeId === 3) {
+            return ['generate_sales_bill'];
+        }
+
+        if (typeId === 5) {
+            return ['generate_invoice'];
+        }
+
+        return [];
+    }
+
+    function allowedGenerateTargetsForSource(sourceType) {
+        sourceType = parseInt(sourceType || 0);
+
+        if (sourceType === 1) {
+            return [2, 3, 5];
+        }
+
+        if (sourceType === 2) {
+            return [3, 5];
+        }
+
+        if (sourceType === 3) {
+            return [5];
+        }
+
+        return [];
+    }
+
+    function canGenerateToTarget(sourceType, targetType, targetGenerateActions) {
+        /*
+         * Final source-row based generate rule.
+         */
+        sourceType = parseInt(sourceType || 0);
+        targetType = parseInt(targetType || 0);
+        targetGenerateActions = targetGenerateActions || generateActionKeysForTarget(targetType);
+
+        if (sourceType <= 0 || targetType <= 0 || sourceType === targetType) {
+            return false;
+        }
+
+        if ($.inArray(targetType, allowedGenerateTargetsForSource(sourceType)) === -1) {
+            return false;
+        }
+
+        for (let i = 0; i < targetGenerateActions.length; i++) {
+            if (docPermission(sourceType, targetGenerateActions[i])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    function canGenerateCurrentTargetDocument(typeId) {
+        let config = getSalesPageConfig();
+        let sourceType = parseInt(config.source_type || 0);
+        typeId = parseInt(typeId || 0);
+
+        return canGenerateToTarget(sourceType, typeId, generateActionKeysForTarget(typeId));
+    }
+
+    function canSaveCurrentDocument() {
+        let config = getSalesPageConfig();
+        let mode = config.mode || 'new';
+        let docType = parseInt($('#documentType').val() || config.target_type || 0);
+
+        if (docType <= 0) {
+            return false;
+        }
+
+        if (mode === 'edit') {
+            return docPermission(docType, 'edit');
+        }
+
+        if (mode === 'convert') {
+            return canGenerateCurrentTargetDocument(docType);
+        }
+
+        return docPermission(docType, 'add');
+    }
+
+    function applySalesPagePermissionControls() {
+        let config = getSalesPageConfig();
+        let mode = config.mode || 'new';
+        let docType = parseInt($('#documentType').val() || config.target_type || 0);
+        let hasCreate = docType > 0 && docPermission(docType, 'add');
+        let hasAnyAccess = hasAnySalesCreateOrGeneratePermission();
+        let hasList = hasAnyDocPermission('list') || hasAnyDocPermission('view') || getGlobalPermission('can_list') || getGlobalPermission('can_view');
+        let canQuickAddCustomer = getGlobalPermission('can_quick_add_customer');
+
+        if (hasList) {
+            $('#salesListNavBtn').removeClass('d-none');
+        } else {
+            $('#salesListNavBtn').addClass('d-none');
+        }
+
+        if (hasCreate) {
+            $('#holdBillBtn, #holdBillsListBtn, #clearDraftBtn').removeClass('d-none');
+        } else {
+            $('#holdBillBtn, #holdBillsListBtn, #clearDraftBtn').addClass('d-none');
+        }
+
+        if (canQuickAddCustomer) {
+            $('#addCustomerBtn, #saveCustomerBtn').removeClass('d-none');
+        } else {
+            $('#addCustomerBtn, #saveCustomerBtn').addClass('d-none');
+        }
+
+        if (canSaveCurrentDocument()) {
+            $('#saveSaleBtn').removeClass('d-none').prop('disabled', false);
+            $('#salesPermissionAlert').addClass('d-none');
+        } else {
+            $('#saveSaleBtn').addClass('d-none').prop('disabled', true);
+
+            if (!hasAnyAccess && mode !== 'edit') {
+                $('#salesPermissionAlert').removeClass('d-none');
+            } else {
+                $('#salesPermissionAlert').addClass('d-none');
+            }
+        }
+
+        if (docType > 0 && (getGlobalPermission('can_receive_payment') || docPermission(docType, 'receive_payment'))) {
+            $('#addPaymentBtn').removeClass('d-none');
+        } else {
+            $('#addPaymentBtn').addClass('d-none');
+        }
+    }
+
+
     function documentLabel(typeId) {
         let config = getSalesPageConfig();
         let info = config.document_types && config.document_types[typeId] ? config.document_types[typeId] : null;
@@ -141,6 +325,7 @@ $(document).ready(function () {
         let config = getSalesPageConfig();
         return !!(config.permissions && config.permissions[typeId] && config.permissions[typeId][action]);
     }
+
 
     function initSalesPageMode() {
         let config = getSalesPageConfig();
@@ -306,6 +491,7 @@ $(document).ready(function () {
         }
 
         $('.sales-convert-btn, #printSaleBtn').addClass('d-none');
+        $('#saveSaleBtn').addClass('d-none').prop('disabled', true);
 
         if (mode === 'convert') {
             $('#saveSaleBtn').html(
@@ -314,10 +500,13 @@ $(document).ready(function () {
             );
         } else if (saleId <= 0) {
             $('#saveSaleBtn').html('<i class="mdi mdi-content-save me-1"></i> Save');
+            applySalesPagePermissionControls();
             return;
         } else {
             $('#saveSaleBtn').html('<i class="mdi mdi-content-save me-1"></i> Update');
         }
+
+        applySalesPagePermissionControls();
 
         if (actionSaleId <= 0 || actionDocType <= 0) {
             return;
@@ -347,49 +536,40 @@ $(document).ready(function () {
             return;
         }
 
-        if (actionDocType === 1) {
-            if ((!isConvertMode || currentTargetType !== 2) && docPermission(1, 'convert') && docPermission(2, 'add')) {
-                $('#convertProformaBtn')
-                    .removeClass('d-none')
-                    .attr('data-source-id', actionSaleId)
-                    .attr('data-source-type', actionDocType);
+        let targetButtons = [
+            {
+                target_type: 2,
+                selector: '#convertProformaBtn',
+                actions: ['generate_proforma_bill']
+            },
+            {
+                target_type: 3,
+                selector: '#convertSalesBillBtn',
+                actions: ['generate_sales_bill']
+            },
+            {
+                target_type: 5,
+                selector: '#generateInvoiceBtn',
+                actions: ['generate_invoice']
+            }
+        ];
+
+        $.each(targetButtons, function (_, btn) {
+            if (btn.target_type === actionDocType) {
+                return;
             }
 
-            if ((!isConvertMode || currentTargetType !== 3) && docPermission(1, 'convert') && docPermission(3, 'add')) {
-                $('#convertSalesBillBtn')
-                    .removeClass('d-none')
-                    .attr('data-source-id', actionSaleId)
-                    .attr('data-source-type', actionDocType);
+            if (isConvertMode && currentTargetType === btn.target_type) {
+                return;
             }
 
-            if ((!isConvertMode || currentTargetType !== 5) && docPermission(1, 'generate_invoice') && docPermission(5, 'add')) {
-                $('#generateInvoiceBtn')
+            if (canGenerateToTarget(actionDocType, btn.target_type, btn.actions)) {
+                $(btn.selector)
                     .removeClass('d-none')
                     .attr('data-source-id', actionSaleId)
                     .attr('data-source-type', actionDocType);
             }
-        } else if (actionDocType === 2) {
-            if ((!isConvertMode || currentTargetType !== 3) && docPermission(2, 'convert') && docPermission(3, 'add')) {
-                $('#convertSalesBillBtn')
-                    .removeClass('d-none')
-                    .attr('data-source-id', actionSaleId)
-                    .attr('data-source-type', actionDocType);
-            }
-
-            if ((!isConvertMode || currentTargetType !== 5) && docPermission(2, 'generate_invoice') && docPermission(5, 'add')) {
-                $('#generateInvoiceBtn')
-                    .removeClass('d-none')
-                    .attr('data-source-id', actionSaleId)
-                    .attr('data-source-type', actionDocType);
-            }
-        } else if (actionDocType === 3) {
-            if ((!isConvertMode || currentTargetType !== 5) && docPermission(3, 'generate_invoice') && docPermission(5, 'add')) {
-                $('#generateInvoiceBtn')
-                    .removeClass('d-none')
-                    .attr('data-source-id', actionSaleId)
-                    .attr('data-source-type', actionDocType);
-            }
-        }
+        });
     }
 
     function bindEvents() {
@@ -457,7 +637,16 @@ $(document).ready(function () {
 
         $('#addItemBtn').on('click', addOrUpdateSalesItem);
         $('#cancelEditItemBtn').on('click', cancelItemEdit);
-        $('#addPaymentBtn').on('click', addPaymentRow);
+        $('#addPaymentBtn').on('click', function () {
+            let docType = parseInt($('#documentType').val() || 0);
+
+            if (docType > 0 && !(getGlobalPermission('can_receive_payment') || docPermission(docType, 'receive_payment'))) {
+                showAppToast('error', 'You do not have permission to add payment for this document.');
+                return;
+            }
+
+            addPaymentRow();
+        });
         $('#saveSaleBtn').on('click', saveSale);
 
         $(document).on('click', '.sales-convert-btn', function () {
@@ -515,6 +704,11 @@ $(document).ready(function () {
         });
 
         $('#addCustomerBtn').on('click', function () {
+            if (!getGlobalPermission('can_quick_add_customer')) {
+                showAppToast('error', 'You do not have permission to add customer.');
+                return;
+            }
+
             resetCustomerModalForm();
             $('#customerModalTitle').text('Add Customer');
             loadCustomerZones();
@@ -1698,6 +1892,11 @@ function addOrUpdateSalesItem() {
     }
 
     function saveSale() {
+        if (!canSaveCurrentDocument()) {
+            showAppToast('error', 'You do not have permission to save/generate this document type.');
+            return;
+        }
+
         if (parseInt($('#customerId').val() || 0) <= 0) {
             if ($.trim($('#customerSearch').val()) === '') {
                 $('#customerSearch').val('Walk-in Customer');
@@ -2152,6 +2351,11 @@ function addOrUpdateSalesItem() {
 
     function saveCustomerFromSales(e) {
         e.preventDefault();
+        if (!getGlobalPermission('can_quick_add_customer')) {
+            showAppToast('error', 'You do not have permission to save customer.');
+            return;
+        }
+
 
         if ($.trim($('#customer_name').val()) === '') {
             showAppToast('warning', 'Please enter customer name.');

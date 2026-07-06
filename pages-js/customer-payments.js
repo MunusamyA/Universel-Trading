@@ -1,4 +1,5 @@
 $(document).ready(function () {
+
     $('#preloader').fadeOut('slow');
 
     let paymentModal = new bootstrap.Modal(document.getElementById('paymentModal'));
@@ -7,7 +8,20 @@ $(document).ready(function () {
     let paymentModes = [];
     let customerDueDocuments = [];
 
-    loadPaymentPage();
+    let pageContext = {
+        can_view: false,
+        can_list: false,
+        can_receive_payment: false,
+        can_edit: false,
+        can_cancel: false,
+        can_sales_list: false,
+        page_title: 'Customer Payments',
+        page_note: '',
+        new_payment_label: 'New Payment',
+        sales_list_url: ''
+    };
+
+    loadPageContext();
 
     $('#refreshPaymentListBtn').on('click', loadPaymentsList);
 
@@ -20,9 +34,17 @@ $(document).ready(function () {
         let saleId = parseInt($(this).val() || 0);
         $('#paymentSalesId').val(saleId || '');
 
-        let doc = customerDueDocuments.find(d => parseInt(d.id) === saleId);
+        let doc = customerDueDocuments.find(function (item) {
+            return parseInt(item.id) === saleId;
+        });
+
         if (doc) {
-            $('#individualDocumentInfo').html(`${escapeHtml(doc.document_label || 'Document')} ${escapeHtml(doc.sales_no || '')} | Due: <strong>${formatCurrency(doc.due_amount || 0)}</strong>`);
+            $('#individualDocumentInfo').html(
+                escapeHtml(doc.document_label || 'Document') + ' ' +
+                escapeHtml(doc.sales_no || '') +
+                ' | Due: <strong>' + formatCurrency(doc.due_amount || 0) + '</strong>'
+            );
+
             resetSplitRows(parseFloat(doc.due_amount || 0).toFixed(2));
         } else {
             $('#individualDocumentInfo').text('');
@@ -49,22 +71,43 @@ $(document).ready(function () {
     });
 
     $('#newPaymentBtn').on('click', function () {
+        if (!pageContext.can_receive_payment) {
+            showPaymentToast('error', 'Permission denied.');
+            return;
+        }
+
         openNewPaymentModal();
     });
 
     $(document).on('click', '.edit-payment-btn', function () {
+        if (!pageContext.can_edit) {
+            showPaymentToast('error', 'Permission denied.');
+            return;
+        }
+
         loadPaymentForEdit(parseInt($(this).data('id') || 0));
     });
 
     $(document).on('click', '.cancel-payment-btn', function () {
+        if (!pageContext.can_cancel) {
+            showPaymentToast('error', 'Permission denied.');
+            return;
+        }
+
         let id = parseInt($(this).data('id') || 0);
-        if (!id) return;
+
+        if (!id) {
+            return;
+        }
 
         let reason = prompt('Reason for cancel / reverse payment?');
-        if (reason === null) return;
+
+        if (reason === null) {
+            return;
+        }
 
         $.ajax({
-            url: window.BASE_URL + 'api/sales.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'POST',
             dataType: 'json',
             data: {
@@ -91,13 +134,27 @@ $(document).ready(function () {
     $('#paymentForm').on('submit', function (e) {
         e.preventDefault();
 
+        let paymentId = parseInt($('#paymentId').val() || 0);
+
+        if (paymentId > 0 && !pageContext.can_edit) {
+            showPaymentToast('error', 'Permission denied.');
+            return;
+        }
+
+        if (paymentId <= 0 && !pageContext.can_receive_payment) {
+            showPaymentToast('error', 'Permission denied.');
+            return;
+        }
+
         if (parseInt($('#paymentType').val() || 0) === 1) {
             let selectedDocId = parseInt($('#individualSalesSelect').val() || $('#paymentSalesId').val() || 0);
+
             if (selectedDocId <= 0) {
                 showPaymentToast('warning', 'Select particular quotation / proforma / sales bill / invoice.');
                 $('#individualSalesSelect').focus();
                 return;
             }
+
             $('#paymentSalesId').val(selectedDocId);
         }
 
@@ -116,7 +173,7 @@ $(document).ready(function () {
         setBtnLoading('#savePaymentBtn', 'Saving...');
 
         $.ajax({
-            url: window.BASE_URL + 'api/sales.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'POST',
             dataType: 'json',
             data: $('#paymentForm').serialize() + '&action=save_customer_payment',
@@ -139,9 +196,64 @@ $(document).ready(function () {
         });
     });
 
-    function loadPaymentPage() {
+    function loadPageContext() {
         $.ajax({
-            url: window.BASE_URL + 'api/sales.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
+            type: 'GET',
+            dataType: 'json',
+            data: {
+                action: 'customer_payments_page_context'
+            },
+            success: function (response) {
+                if (response.status === true) {
+                    pageContext = response.data.context || pageContext;
+                    applyPageContext();
+                    loadPaymentPage();
+                } else {
+                    $('#paymentsTableBody').html('<tr><td colspan="10" class="text-center text-danger">' + escapeHtml(response.message || 'Permission denied.') + '</td></tr>');
+                    $('#newPaymentBtn').addClass('d-none');
+                    $('#salesListBtn').addClass('d-none');
+                }
+            },
+            error: function (xhr) {
+                console.log(xhr.responseText);
+                $('#paymentsTableBody').html('<tr><td colspan="10" class="text-center text-danger">Server error.</td></tr>');
+                $('#newPaymentBtn').addClass('d-none');
+                $('#salesListBtn').addClass('d-none');
+            }
+        });
+    }
+
+    function applyPageContext() {
+        $('#pageTitleText').text(pageContext.page_title || 'Customer Payments');
+        $('#pageNoteText').text(pageContext.page_note || '');
+        $('#newPaymentBtnText').text(pageContext.new_payment_label || 'New Payment');
+
+        if (pageContext.sales_list_url) {
+            $('#salesListBtn').attr('href', pageContext.sales_list_url);
+        }
+
+        if (pageContext.can_sales_list) {
+            $('#salesListBtn').removeClass('d-none');
+        } else {
+            $('#salesListBtn').addClass('d-none');
+        }
+
+        if (pageContext.can_receive_payment) {
+            $('#newPaymentBtn').removeClass('d-none');
+        } else {
+            $('#newPaymentBtn').addClass('d-none');
+        }
+    }
+
+    function loadPaymentPage() {
+        if (!pageContext.can_view && !pageContext.can_list) {
+            $('#paymentsTableBody').html('<tr><td colspan="10" class="text-center text-danger">Permission denied.</td></tr>');
+            return;
+        }
+
+        $.ajax({
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
             data: {
@@ -154,12 +266,14 @@ $(document).ready(function () {
                     paymentModes = response.data.payment_modes || [];
                     selectedCustomer = response.data.selected_customer || null;
                     selectedSale = response.data.selected_sale || null;
+
                     renderPaymentModes();
                     renderHeaderCards();
                     renderSelectedSale();
                     renderPayments(response.data.payments || []);
+
                     loadCustomerDueDocuments(function () {
-                        if (selectedSale) {
+                        if (selectedSale && pageContext.can_receive_payment) {
                             openNewPaymentModal();
                         }
                     });
@@ -175,10 +289,15 @@ $(document).ready(function () {
     }
 
     function loadPaymentsList() {
+        if (!pageContext.can_list) {
+            $('#paymentsTableBody').html('<tr><td colspan="10" class="text-center text-danger">Permission denied.</td></tr>');
+            return;
+        }
+
         $('#paymentsTableBody').html('<tr><td colspan="10" class="text-center text-muted">Loading...</td></tr>');
 
         $.ajax({
-            url: window.BASE_URL + 'api/sales.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
             data: {
@@ -202,6 +321,7 @@ $(document).ready(function () {
 
     function loadCustomerDueDocuments(callback) {
         let customerId = 0;
+
         if (selectedSale && selectedSale.customer_id) {
             customerId = parseInt(selectedSale.customer_id || 0);
         } else if (selectedCustomer && selectedCustomer.id) {
@@ -209,12 +329,16 @@ $(document).ready(function () {
         } else {
             customerDueDocuments = [];
             renderIndividualDocumentOptions();
-            if (callback) callback();
+
+            if (callback) {
+                callback();
+            }
+
             return;
         }
 
         $.ajax({
-            url: window.BASE_URL + 'api/sales.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
             data: {
@@ -226,13 +350,19 @@ $(document).ready(function () {
                     customerDueDocuments = response.data.rows || [];
                     renderIndividualDocumentOptions();
                 }
-                if (callback) callback();
+
+                if (callback) {
+                    callback();
+                }
             },
             error: function (xhr) {
                 console.log(xhr.responseText);
                 customerDueDocuments = [];
                 renderIndividualDocumentOptions();
-                if (callback) callback();
+
+                if (callback) {
+                    callback();
+                }
             }
         });
     }
@@ -242,7 +372,12 @@ $(document).ready(function () {
 
         $.each(customerDueDocuments || [], function (_, doc) {
             let selected = parseInt(doc.id) === parseInt(selectedId || 0) ? 'selected' : '';
-            html += `<option value="${doc.id}" ${selected}>${escapeHtml(doc.document_label || 'Document')} - ${escapeHtml(doc.sales_no || '')} | Due: ${formatCurrency(doc.due_amount || 0)}</option>`;
+
+            html += '<option value="' + doc.id + '" ' + selected + '>' +
+                escapeHtml(doc.document_label || 'Document') + ' - ' +
+                escapeHtml(doc.sales_no || '') + ' | Due: ' +
+                formatCurrency(doc.due_amount || 0) +
+                '</option>';
         });
 
         $('#individualSalesSelect').html(html);
@@ -250,10 +385,12 @@ $(document).ready(function () {
 
     function toggleIndividualDocumentBox() {
         let type = parseInt($('#paymentType').val() || 0);
+
         if (type === 1) {
             $('#individualDocumentBox').show();
         } else {
             $('#individualDocumentBox').hide();
+
             if (!selectedSale) {
                 $('#paymentSalesId').val('');
                 $('#individualSalesSelect').val('');
@@ -273,7 +410,9 @@ $(document).ready(function () {
 
         $('#openingDueCard').text(formatCurrency(selectedCustomer.opening_due || 0));
         $('#salesDueCard').text(formatCurrency(selectedCustomer.sales_due || 0));
+
         let total = parseFloat(selectedCustomer.opening_due || 0) + parseFloat(selectedCustomer.sales_due || 0);
+
         $('#totalDueCard').text(formatCurrency(total));
         $('#selectedCustomerCard').text(selectedCustomer.customer_name || '-');
     }
@@ -298,40 +437,45 @@ $(document).ready(function () {
         }
 
         let html = '';
+
         $.each(rows, function (index, row) {
-            html += `
-                <tr>
-                    <td>${index + 1}</td>
-                    <td><strong>${escapeHtml(row.payment_no || '')}</strong></td>
-                    <td>${formatDate(row.payment_date)}</td>
-                    <td>
-                        <strong>${escapeHtml(row.customer_name || '')}</strong><br>
-                        <small class="text-muted">${escapeHtml(row.customer_mobile || '')}</small>
-                    </td>
-                    <td>${paymentTypeBadge(row.payment_type)}</td>
-                    <td>
-                        ${escapeHtml(row.mode_name || '')}
-                        ${row.split_summary ? `<br><small class="text-muted">${escapeHtml(row.split_summary)}</small>` : ''}
-                    </td>
-                    <td>
-                        ${row.sales_no ? `<strong>${escapeHtml(row.sales_no)}</strong><br><small class="text-muted">${escapeHtml(row.document_label || '')}</small>` : '-'}
-                    </td>
-                    <td class="text-end">${formatCurrency(row.amount || 0)}</td>
-                    <td>${paymentStatusBadge(row.status)}</td>
-                    <td class="text-end">
-                        <div class="btn-group btn-group-sm">
-                            ${parseInt(row.status || 0) === 1 ? `<button type="button" class="btn btn-outline-primary edit-payment-btn" data-id="${row.id}" title="Edit"><i class="mdi mdi-pencil"></i></button>
-                            <button type="button" class="btn btn-outline-danger cancel-payment-btn" data-id="${row.id}" title="Cancel / Reverse"><i class="mdi mdi-close-circle"></i></button>` : ''}
-                        </div>
-                    </td>
-                </tr>
-            `;
+            let actionHtml = '';
+
+            if (parseInt(row.status || 0) === 1 && pageContext.can_edit) {
+                actionHtml += '<button type="button" class="btn btn-outline-primary btn-sm edit-payment-btn" data-id="' + row.id + '" title="Edit"><i class="mdi mdi-pencil"></i></button>';
+            }
+
+            if (parseInt(row.status || 0) === 1 && pageContext.can_cancel) {
+                actionHtml += '<button type="button" class="btn btn-outline-danger btn-sm ms-1 cancel-payment-btn" data-id="' + row.id + '" title="Cancel / Reverse"><i class="mdi mdi-close-circle"></i></button>';
+            }
+
+            if (actionHtml === '') {
+                actionHtml = '<span class="text-muted">No access</span>';
+            }
+
+            html += '<tr>';
+            html += '<td>' + (index + 1) + '</td>';
+            html += '<td><strong>' + escapeHtml(row.payment_no || '') + '</strong></td>';
+            html += '<td>' + formatDate(row.payment_date) + '</td>';
+            html += '<td><strong>' + escapeHtml(row.customer_name || '') + '</strong><br><small class="text-muted">' + escapeHtml(row.customer_mobile || '') + '</small></td>';
+            html += '<td>' + paymentTypeBadge(row.payment_type) + '</td>';
+            html += '<td>' + escapeHtml(row.mode_name || '') + (row.split_summary ? '<br><small class="text-muted">' + escapeHtml(row.split_summary) + '</small>' : '') + '</td>';
+            html += '<td>' + (row.sales_no ? '<strong>' + escapeHtml(row.sales_no) + '</strong><br><small class="text-muted">' + escapeHtml(row.document_label || '') + '</small>' : '-') + '</td>';
+            html += '<td class="text-end">' + formatCurrency(row.amount || 0) + '</td>';
+            html += '<td>' + paymentStatusBadge(row.status) + '</td>';
+            html += '<td class="text-end">' + actionHtml + '</td>';
+            html += '</tr>';
         });
 
         $('#paymentsTableBody').html(html);
     }
 
     function openNewPaymentModal() {
+        if (!pageContext.can_receive_payment) {
+            showPaymentToast('error', 'Permission denied.');
+            return;
+        }
+
         $('#paymentForm')[0].reset();
         $('#paymentId').val('');
         $('#paymentDate').val(currentDate());
@@ -345,17 +489,34 @@ $(document).ready(function () {
             $('#paymentTypeHidden').val('1');
             $('#individualSalesSelect').val(String(selectedSale.id || ''));
             $('#paymentSalesId').val(selectedSale.id || '');
-            $('#individualDocumentInfo').html(`${escapeHtml(selectedSale.document_label || 'Document')} ${escapeHtml(selectedSale.sales_no || '')} | Due: <strong>${formatCurrency(selectedSale.due_amount || 0)}</strong>`);
+            $('#individualDocumentInfo').html(
+                escapeHtml(selectedSale.document_label || 'Document') + ' ' +
+                escapeHtml(selectedSale.sales_no || '') +
+                ' | Due: <strong>' + formatCurrency(selectedSale.due_amount || 0) + '</strong>'
+            );
+
             resetSplitRows(parseFloat(selectedSale.due_amount || 0).toFixed(2));
-            $('#paymentInfoBox').html(`<strong>${escapeHtml(selectedSale.customer_name || '')}</strong> - ${escapeHtml(selectedSale.document_label || 'Document')} ${escapeHtml(selectedSale.sales_no || '')} | Due: <strong>${formatCurrency(selectedSale.due_amount || 0)}</strong>`);
+
+            $('#paymentInfoBox').html(
+                '<strong>' + escapeHtml(selectedSale.customer_name || '') + '</strong> - ' +
+                escapeHtml(selectedSale.document_label || 'Document') + ' ' +
+                escapeHtml(selectedSale.sales_no || '') +
+                ' | Due: <strong>' + formatCurrency(selectedSale.due_amount || 0) + '</strong>'
+            );
         } else if (selectedCustomer) {
             $('#paymentCustomerId').val(selectedCustomer.id);
             $('#paymentSalesId').val('');
             $('#paymentType').val('2').prop('disabled', false);
             $('#paymentTypeHidden').val('2');
+
             let total = parseFloat(selectedCustomer.opening_due || 0) + parseFloat(selectedCustomer.sales_due || 0);
+
             resetSplitRows(total.toFixed(2));
-            $('#paymentInfoBox').html(`<strong>${escapeHtml(selectedCustomer.customer_name || '')}</strong> | Total Due: <strong>${formatCurrency(total)}</strong>`);
+
+            $('#paymentInfoBox').html(
+                '<strong>' + escapeHtml(selectedCustomer.customer_name || '') +
+                '</strong> | Total Due: <strong>' + formatCurrency(total) + '</strong>'
+            );
         } else {
             showPaymentToast('warning', 'Open this page from sales list payment icon or customer payment icon.');
             return;
@@ -364,45 +525,55 @@ $(document).ready(function () {
         renderIndividualDocumentOptions(selectedSale ? selectedSale.id : '');
         toggleIndividualDocumentBox();
         recalculateSplitTotal();
+
         $('#paymentModalTitle').text('Receive Payment');
         paymentModal.show();
     }
 
     function loadPaymentForEdit(id) {
-        if (!id) return;
+        if (!id) {
+            return;
+        }
 
         $.ajax({
-            url: window.BASE_URL + 'api/sales.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
-            data: { action: 'get_customer_payment', id: id },
+            data: {
+                action: 'get_customer_payment',
+                id: id
+            },
             success: function (response) {
                 if (response.status === true) {
-                    let p = response.data.payment || {};
+                    let payment = response.data.payment || {};
                     selectedCustomer = response.data.customer || selectedCustomer;
 
                     $('#paymentForm')[0].reset();
-                    $('#paymentId').val(p.id || '');
-                    $('#paymentCustomerId').val(p.customer_id || '');
-                    $('#paymentSalesId').val(p.sales_id || '');
-                    $('#paymentType').val(p.payment_type || 2).prop('disabled', false);
-                    $('#paymentTypeHidden').val(p.payment_type || 2);
-                    $('#paymentDate').val(p.payment_date || currentDate());
-                    renderIndividualDocumentOptions(p.sales_id || '');
-                    $('#individualSalesSelect').val(p.sales_id || '');
-                    $('#paymentSalesId').val(p.sales_id || '');
-                    $('#paymentNotes').val(p.notes || '');
+                    $('#paymentId').val(payment.id || '');
+                    $('#paymentCustomerId').val(payment.customer_id || '');
+                    $('#paymentSalesId').val(payment.sales_id || '');
+                    $('#paymentType').val(payment.payment_type || 2).prop('disabled', false);
+                    $('#paymentTypeHidden').val(payment.payment_type || 2);
+                    $('#paymentDate').val(payment.payment_date || currentDate());
+                    renderIndividualDocumentOptions(payment.sales_id || '');
+                    $('#individualSalesSelect').val(payment.sales_id || '');
+                    $('#paymentSalesId').val(payment.sales_id || '');
+                    $('#paymentNotes').val(payment.notes || '');
                     $('#splitRowsBody').html('');
+
                     let splits = response.data.splits || [];
+
                     if (splits.length) {
                         $.each(splits, function (_, split) {
                             addSplitRow(split.payment_mode_id, split.amount, split.reference_no || '');
                         });
                     } else {
-                        addSplitRow(p.payment_mode_id || '', p.amount || 0, p.reference_no || '');
+                        addSplitRow(payment.payment_mode_id || '', payment.amount || 0, payment.reference_no || '');
                     }
-                    $('#paymentInfoBox').html(`<strong>Edit:</strong> ${escapeHtml(p.payment_no || '')}. Old allocation will reverse and recalculate.`);
+
+                    $('#paymentInfoBox').html('<strong>Edit:</strong> ' + escapeHtml(payment.payment_no || '') + '. Old allocation will reverse and recalculate.');
                     $('#paymentModalTitle').text('Edit Payment');
+
                     toggleIndividualDocumentBox();
                     recalculateSplitTotal();
                     paymentModal.show();
@@ -419,10 +590,12 @@ $(document).ready(function () {
 
     function paymentModeOptions(selectedId) {
         let html = '<option value="">Select</option>';
+
         $.each(paymentModes || [], function (_, mode) {
             let selected = parseInt(mode.id) === parseInt(selectedId || 0) ? 'selected' : '';
-            html += `<option value="${mode.id}" ${selected}>${escapeHtml(mode.mode_name || '')}</option>`;
+            html += '<option value="' + mode.id + '" ' + selected + '>' + escapeHtml(mode.mode_name || '') + '</option>';
         });
+
         return html;
     }
 
@@ -431,26 +604,15 @@ $(document).ready(function () {
     }
 
     function addSplitRow(modeId, amount, referenceNo) {
-        let html = `
-            <tr class="split-row">
-                <td>
-                    <select class="form-select form-select-sm split-mode">
-                        ${paymentModeOptions(modeId)}
-                    </select>
-                </td>
-                <td>
-                    <input type="number" step="0.01" min="0" class="form-control form-control-sm split-amount" value="${amount ? parseFloat(amount).toFixed(2) : ''}">
-                </td>
-                <td>
-                    <input type="text" class="form-control form-control-sm split-reference" value="${escapeHtml(referenceNo || '')}" placeholder="Ref no">
-                </td>
-                <td class="text-center">
-                    <button type="button" class="btn btn-sm btn-outline-danger remove-split-row-btn">
-                        <i class="mdi mdi-delete"></i>
-                    </button>
-                </td>
-            </tr>
-        `;
+        let html = '';
+
+        html += '<tr class="split-row">';
+        html += '<td><select class="form-select form-select-sm split-mode">' + paymentModeOptions(modeId) + '</select></td>';
+        html += '<td><input type="number" step="0.01" min="0" class="form-control form-control-sm split-amount" value="' + (amount ? parseFloat(amount).toFixed(2) : '') + '"></td>';
+        html += '<td><input type="text" class="form-control form-control-sm split-reference" value="' + escapeHtml(referenceNo || '') + '" placeholder="Ref no"></td>';
+        html += '<td class="text-center"><button type="button" class="btn btn-sm btn-outline-danger remove-split-row-btn"><i class="mdi mdi-delete"></i></button></td>';
+        html += '</tr>';
+
         $('#splitRowsBody').append(html);
         recalculateSplitTotal();
     }
@@ -462,6 +624,7 @@ $(document).ready(function () {
 
     function collectSplitRows() {
         let rows = [];
+
         $('#splitRowsBody .split-row').each(function () {
             let modeId = parseInt($(this).find('.split-mode').val() || 0);
             let amount = parseFloat($(this).find('.split-amount').val() || 0);
@@ -475,35 +638,56 @@ $(document).ready(function () {
                 });
             }
         });
+
         return rows;
     }
 
     function getSplitTotal() {
         let total = 0;
+
         $('#splitRowsBody .split-amount').each(function () {
             total += parseFloat($(this).val() || 0);
         });
+
         return total;
     }
 
     function recalculateSplitTotal() {
         let total = getSplitTotal();
+
         $('#splitTotalText').text(formatCurrency(total));
         $('#paymentAmount').val(total.toFixed(2));
     }
 
     function paymentTypeBadge(type) {
         type = parseInt(type || 0);
-        if (type === 1) return '<span class="badge bg-primary">Individual Document</span>';
-        if (type === 2) return '<span class="badge bg-info">Overall</span>';
-        if (type === 3) return '<span class="badge bg-warning text-dark">Opening</span>';
+
+        if (type === 1) {
+            return '<span class="badge bg-primary">Individual Document</span>';
+        }
+
+        if (type === 2) {
+            return '<span class="badge bg-info">Overall</span>';
+        }
+
+        if (type === 3) {
+            return '<span class="badge bg-warning text-dark">Opening</span>';
+        }
+
         return '<span class="badge bg-secondary">Unknown</span>';
     }
 
     function paymentStatusBadge(status) {
         status = parseInt(status || 0);
-        if (status === 1) return '<span class="badge bg-success">Active</span>';
-        if (status === 2) return '<span class="badge bg-danger">Cancelled</span>';
+
+        if (status === 1) {
+            return '<span class="badge bg-success">Active</span>';
+        }
+
+        if (status === 2) {
+            return '<span class="badge bg-danger">Cancelled</span>';
+        }
+
         return '<span class="badge bg-secondary">Unknown</span>';
     }
 
@@ -515,9 +699,16 @@ $(document).ready(function () {
     }
 
     function formatDate(date) {
-        if (!date) return '-';
+        if (!date) {
+            return '-';
+        }
+
         let parts = String(date).split('-');
-        if (parts.length !== 3) return escapeHtml(date);
+
+        if (parts.length !== 3) {
+            return escapeHtml(date);
+        }
+
         return parts[2] + '-' + parts[1] + '-' + parts[0];
     }
 
@@ -538,12 +729,19 @@ $(document).ready(function () {
     function showPaymentToast(type, message) {
         if (typeof showToast === 'function') {
             showToast(type, message, 5000);
-        } else {
-            alert(message);
+            return;
         }
+
+        if (typeof showAppToast === 'function') {
+            showAppToast(type, message);
+            return;
+        }
+
+        alert(message);
     }
 
     function escapeHtml(value) {
         return $('<div>').text(value == null ? '' : value).html();
     }
+
 });

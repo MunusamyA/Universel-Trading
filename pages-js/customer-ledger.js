@@ -1,7 +1,17 @@
 $(document).ready(function () {
+
     $('#preloader').fadeOut('slow');
 
-    loadCustomers();
+    let pageContext = {
+        can_view: false,
+        can_list: false,
+        can_customers: false,
+        page_title: 'Customer Ledger',
+        page_note: 'Debit / Credit / Balance statement',
+        customers_url: ''
+    };
+
+    loadPageContext();
 
     $('#filterLedgerBtn').on('click', loadLedger);
 
@@ -14,34 +24,101 @@ $(document).ready(function () {
 
     $('#customerId').on('change', loadLedger);
 
-    function loadCustomers() {
+    function loadPageContext() {
         $.ajax({
-            url: window.BASE_URL + 'api/customer-ledger.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
-            data: { action: 'search_customers' },
+            data: {
+                action: 'get_page_context'
+            },
+            success: function (response) {
+                if (response.status === true) {
+                    pageContext = response.data.context || pageContext;
+                    applyPageContext();
+                    loadCustomers();
+                } else {
+                    $('#ledgerTableBody').html('<tr><td colspan="8" class="text-center text-danger">' + escapeHtml(response.message || 'Permission denied.') + '</td></tr>');
+                    $('#ledgerFilterCard').addClass('d-none');
+                    $('#customersBtn').addClass('d-none');
+                }
+            },
+            error: function (xhr) {
+                console.log(xhr.responseText);
+                $('#ledgerTableBody').html('<tr><td colspan="8" class="text-center text-danger">Server error.</td></tr>');
+                $('#ledgerFilterCard').addClass('d-none');
+                $('#customersBtn').addClass('d-none');
+            }
+        });
+    }
+
+    function applyPageContext() {
+        $('#pageTitleText').text(pageContext.page_title || 'Customer Ledger');
+        $('#pageNoteText').text(pageContext.page_note || 'Debit / Credit / Balance statement');
+
+        if (pageContext.customers_url) {
+            $('#customersBtn').attr('href', pageContext.customers_url);
+        }
+
+        if (pageContext.can_customers) {
+            $('#customersBtn').removeClass('d-none');
+        } else {
+            $('#customersBtn').addClass('d-none');
+        }
+    }
+
+    function loadCustomers() {
+        if (!pageContext.can_view && !pageContext.can_list) {
+            $('#ledgerTableBody').html('<tr><td colspan="8" class="text-center text-danger">Permission denied.</td></tr>');
+            return;
+        }
+
+        $.ajax({
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
+            type: 'GET',
+            dataType: 'json',
+            data: {
+                action: 'search_customers'
+            },
             success: function (response) {
                 if (response.status === true) {
                     let html = '<option value="">Select Customer</option>';
+
                     $.each(response.data.customers || [], function (_, customer) {
                         let label = customer.customer_name + (customer.mobile ? ' - ' + customer.mobile : '');
-                        html += `<option value="${customer.id}">${escapeHtml(label)}</option>`;
+                        html += '<option value="' + customer.id + '">' + escapeHtml(label) + '</option>';
                     });
+
                     $('#customerId').html(html);
-                } else showToastSafe('error', response.message || 'Unable to load customers.');
+                } else {
+                    showToastSafe('error', response.message || 'Unable to load customers.');
+                }
             },
-            error: function (xhr) { console.log(xhr.responseText); showToastSafe('error', 'Server error.'); }
+            error: function (xhr) {
+                console.log(xhr.responseText);
+                showToastSafe('error', 'Server error.');
+            }
         });
     }
 
     function getCheckedTypes() {
         let types = [];
-        $('.ledger-doc-type:checked').each(function () { types.push($(this).val()); });
+
+        $('.ledger-doc-type:checked').each(function () {
+            types.push($(this).val());
+        });
+
         return types;
     }
 
     function loadLedger() {
+        if (!pageContext.can_list) {
+            $('#ledgerTableBody').html('<tr><td colspan="8" class="text-center text-danger">Permission denied.</td></tr>');
+            return;
+        }
+
         let customerId = $('#customerId').val();
+
         if (!customerId) {
             $('#ledgerTableBody').html('<tr><td colspan="8" class="text-center text-muted">Select customer and filter ledger.</td></tr>');
             resetStats();
@@ -49,8 +126,9 @@ $(document).ready(function () {
         }
 
         $('#ledgerTableBody').html('<tr><td colspan="8" class="text-center text-muted">Loading...</td></tr>');
+
         $.ajax({
-            url: window.BASE_URL + 'api/customer-ledger.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
             data: {
@@ -66,7 +144,7 @@ $(document).ready(function () {
                     renderSummary(response.data.summary || {});
                     renderCustomerInfo(response.data.customer || {});
                 } else {
-                    $('#ledgerTableBody').html(`<tr><td colspan="8" class="text-center text-danger">${escapeHtml(response.message || 'Unable to load ledger.')}</td></tr>`);
+                    $('#ledgerTableBody').html('<tr><td colspan="8" class="text-center text-danger">' + escapeHtml(response.message || 'Unable to load ledger.') + '</td></tr>');
                     showToastSafe('error', response.message || 'Unable to load ledger.');
                 }
             },
@@ -82,20 +160,22 @@ $(document).ready(function () {
             $('#ledgerTableBody').html('<tr><td colspan="8" class="text-center text-muted">No ledger entries found.</td></tr>');
             return;
         }
+
         let html = '';
+
         $.each(rows, function (index, row) {
-            html += `
-                <tr>
-                    <td>${index + 1}</td>
-                    <td>${formatDate(row.entry_date)}</td>
-                    <td><h6 class="mb-0">${escapeHtml(row.particular || '')}</h6></td>
-                    <td>${escapeHtml(row.reference_no || '-')}</td>
-                    <td>${typeBadge(row.document_type, row.document_label)}</td>
-                    <td class="text-end text-danger">${parseFloat(row.debit || 0) > 0 ? formatCurrency(row.debit) : '-'}</td>
-                    <td class="text-end text-success">${parseFloat(row.credit || 0) > 0 ? formatCurrency(row.credit) : '-'}</td>
-                    <td class="text-end"><strong>${formatCurrency(row.balance || 0)}</strong></td>
-                </tr>`;
+            html += '<tr>';
+            html += '<td>' + (index + 1) + '</td>';
+            html += '<td>' + formatDate(row.entry_date) + '</td>';
+            html += '<td><h6 class="mb-0">' + escapeHtml(row.particular || '') + '</h6></td>';
+            html += '<td>' + escapeHtml(row.reference_no || '-') + '</td>';
+            html += '<td>' + typeBadge(row.document_type, row.document_label) + '</td>';
+            html += '<td class="text-end text-danger">' + (parseFloat(row.debit || 0) > 0 ? formatCurrency(row.debit) : '-') + '</td>';
+            html += '<td class="text-end text-success">' + (parseFloat(row.credit || 0) > 0 ? formatCurrency(row.credit) : '-') + '</td>';
+            html += '<td class="text-end"><strong>' + formatCurrency(row.balance || 0) + '</strong></td>';
+            html += '</tr>';
         });
+
         $('#ledgerTableBody').html(html);
     }
 
@@ -117,40 +197,93 @@ $(document).ready(function () {
 
     function renderCustomerInfo(customer) {
         $('#ledgerCustomerName').text(customer.customer_name || '-');
+
         let info = [];
-        if (customer.mobile) info.push(customer.mobile);
-        if (customer.gst_number) info.push(customer.gst_number);
+
+        if (customer.mobile) {
+            info.push(customer.mobile);
+        }
+
+        if (customer.gst_number) {
+            info.push(customer.gst_number);
+        }
+
         $('#ledgerCustomerInfo').text(info.join(' | ') || 'Ledger statement');
     }
 
     function typeBadge(type, label) {
         type = parseInt(type || 0);
-        if (type === 0) return '<span class="badge bg-secondary">Opening</span>';
-        if (type === 1) return '<span class="badge bg-soft-primary text-primary">Quotation</span>';
-        if (type === 2) return '<span class="badge bg-soft-info text-info">Proforma</span>';
-        if (type === 3) return '<span class="badge bg-soft-warning text-warning">Sales Bill</span>';
-        if (type === 4) return '<span class="badge bg-soft-success text-success">Direct Bill</span>';
-        if (type === 5) return '<span class="badge bg-primary">Final Invoice</span>';
-        if (type === 99) return '<span class="badge bg-success">Payment</span>';
-        return `<span class="badge bg-light text-dark">${escapeHtml(label || 'Document')}</span>`;
+
+        if (type === 0) {
+            return '<span class="badge bg-secondary">Opening</span>';
+        }
+
+        if (type === 1) {
+            return '<span class="badge bg-soft-primary text-primary">Quotation</span>';
+        }
+
+        if (type === 2) {
+            return '<span class="badge bg-soft-info text-info">Proforma</span>';
+        }
+
+        if (type === 3) {
+            return '<span class="badge bg-soft-warning text-warning">Sales Bill</span>';
+        }
+
+        if (type === 4) {
+            return '<span class="badge bg-soft-success text-success">Direct Bill</span>';
+        }
+
+        if (type === 5) {
+            return '<span class="badge bg-primary">Final Invoice</span>';
+        }
+
+        if (type === 99) {
+            return '<span class="badge bg-success">Payment</span>';
+        }
+
+        return '<span class="badge bg-light text-dark">' + escapeHtml(label || 'Document') + '</span>';
     }
 
     function formatDate(date) {
-        if (!date) return '-';
+        if (!date) {
+            return '-';
+        }
+
         let parts = String(date).split('-');
-        if (parts.length !== 3) return escapeHtml(date);
+
+        if (parts.length !== 3) {
+            return escapeHtml(date);
+        }
+
         return parts[2] + '-' + parts[1] + '-' + parts[0];
     }
 
     function formatCurrency(value) {
         let numberValue = parseFloat(value || 0);
-        return '₹' + numberValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+        return '₹' + numberValue.toLocaleString('en-IN', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
     }
 
     function showToastSafe(type, message) {
-        if (typeof showToast === 'function') showToast(type, message, 5000);
-        else alert(message);
+        if (typeof showToast === 'function') {
+            showToast(type, message, 5000);
+            return;
+        }
+
+        if (typeof showAppToast === 'function') {
+            showAppToast(type, message);
+            return;
+        }
+
+        alert(message);
     }
 
-    function escapeHtml(value) { return $('<div>').text(value === null || value === undefined ? '' : value).html(); }
+    function escapeHtml(value) {
+        return $('<div>').text(value === null || value === undefined ? '' : value).html();
+    }
+
 });

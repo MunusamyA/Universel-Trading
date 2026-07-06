@@ -13,11 +13,373 @@ requireApiLogin();
 $action = cleanInput($_GET['action'] ?? $_POST['action'] ?? '');
 
 switch ($action) {
+    case 'get_page_context':
+        getDailyLedgerPageContext($pdo);
+        break;
+
     case 'list_report':
         listDailyLedgerReport($pdo);
         break;
+
     default:
         jsonResponse(false, 'Invalid action.');
+}
+
+function dlPermissionActionCode($action)
+{
+    if (is_numeric($action)) {
+        return (int)$action;
+    }
+
+    $map = [
+        'view' => 1,
+        'list' => 2,
+        'add' => 3,
+        'create' => 3,
+        'edit' => 4,
+        'delete' => 5,
+        'print' => 6,
+        'export' => 7,
+        'download' => 21,
+        'generate_report' => 31,
+        'report' => 31
+    ];
+
+    $key = strtolower(trim((string)$action));
+
+    return $map[$key] ?? 1;
+}
+
+function dlPermissionActionName($actionCode)
+{
+    $map = [
+        1 => 'view',
+        2 => 'list',
+        3 => 'add',
+        4 => 'edit',
+        5 => 'delete',
+        6 => 'print',
+        7 => 'export',
+        21 => 'download',
+        31 => 'generate_report'
+    ];
+
+    return $map[(int)$actionCode] ?? 'view';
+}
+
+function dlReportPermissionKeys()
+{
+    return [
+        'daily_ledger_report',
+        'daily-ledger-report',
+        'daily_ledger',
+        'ledger_report',
+        'reports'
+    ];
+}
+
+function dlCurrentRoleIdsForPermission()
+{
+    static $roleIds = null;
+
+    if ($roleIds !== null) {
+        return $roleIds;
+    }
+
+    global $pdo;
+
+    $roleIds = [];
+
+    if (function_exists('currentRoleId')) {
+        $roleId = (int)currentRoleId();
+        if ($roleId > 0) {
+            $roleIds[] = $roleId;
+        }
+    }
+
+    foreach (['role_id', 'current_role_id', 'user_role_id'] as $sessionKey) {
+        if (!empty($_SESSION[$sessionKey])) {
+            $roleId = (int)$_SESSION[$sessionKey];
+            if ($roleId > 0) {
+                $roleIds[] = $roleId;
+            }
+        }
+    }
+
+    if (function_exists('currentUserId')) {
+        $userId = (int)currentUserId();
+
+        if ($userId > 0 && isset($pdo) && $pdo instanceof PDO) {
+            try {
+                $stmt = $pdo->prepare("SELECT role_id FROM users WHERE id = :id LIMIT 1");
+                $stmt->execute([':id' => $userId]);
+                $dbRoleId = (int)$stmt->fetchColumn();
+
+                if ($dbRoleId > 0) {
+                    $roleIds[] = $dbRoleId;
+                }
+            } catch (Throwable $e) {
+                // Ignore fallback errors.
+            }
+        }
+    }
+
+    $roleIds = array_values(array_unique(array_filter(array_map('intval', $roleIds))));
+
+    /*
+     * Include parent package role also.
+     */
+    if ($roleIds && isset($pdo) && $pdo instanceof PDO) {
+        try {
+            $holders = [];
+            $params = [];
+
+            foreach ($roleIds as $index => $roleId) {
+                $key = ':role_' . $index;
+                $holders[] = $key;
+                $params[$key] = $roleId;
+            }
+
+            $stmt = $pdo->prepare("
+                SELECT parent_role_id
+                FROM roles
+                WHERE id IN (" . implode(',', $holders) . ")
+                AND parent_role_id IS NOT NULL
+                AND parent_role_id > 0
+            ");
+            $stmt->execute($params);
+
+            foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $parentRoleId) {
+                $parentRoleId = (int)$parentRoleId;
+                if ($parentRoleId > 0) {
+                    $roleIds[] = $parentRoleId;
+                }
+            }
+        } catch (Throwable $e) {
+            // Ignore parent lookup errors.
+        }
+    }
+
+    return array_values(array_unique(array_filter(array_map('intval', $roleIds))));
+}
+
+function dlRoleBaseMenuRowsExist($moduleKeys)
+{
+    global $pdo;
+
+    if (!isset($pdo) || !($pdo instanceof PDO)) {
+        return false;
+    }
+
+    if (!is_array($moduleKeys)) {
+        $moduleKeys = [$moduleKeys];
+    }
+
+    $moduleKeys = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $moduleKeys)))));
+    $roleIds = dlCurrentRoleIdsForPermission();
+
+    if (!$moduleKeys || !$roleIds) {
+        return false;
+    }
+
+    try {
+        $keyHolders = [];
+        $roleHolders = [];
+        $params = [];
+
+        foreach ($moduleKeys as $index => $moduleKey) {
+            $key = ':menu_key_' . $index;
+            $keyHolders[] = $key;
+            $params[$key] = $moduleKey;
+        }
+
+        foreach ($roleIds as $index => $roleId) {
+            $key = ':role_id_' . $index;
+            $roleHolders[] = $key;
+            $params[$key] = $roleId;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT 1
+            FROM role_base_access rba
+            INNER JOIN sidebar_menus sm ON sm.id = rba.menu_id
+            WHERE rba.role_id IN (" . implode(',', $roleHolders) . ")
+            AND sm.menu_key IN (" . implode(',', $keyHolders) . ")
+            LIMIT 1
+        ");
+        $stmt->execute($params);
+
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function dlRoleBasePermissionAllowed($moduleKeys, $action)
+{
+    global $pdo;
+
+    if (!isset($pdo) || !($pdo instanceof PDO)) {
+        return false;
+    }
+
+    if (!is_array($moduleKeys)) {
+        $moduleKeys = [$moduleKeys];
+    }
+
+    $moduleKeys = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $moduleKeys)))));
+    $roleIds = dlCurrentRoleIdsForPermission();
+    $actionCode = dlPermissionActionCode($action);
+
+    if (!$moduleKeys || !$roleIds) {
+        return false;
+    }
+
+    try {
+        $keyHolders = [];
+        $roleHolders = [];
+        $params = [
+            ':action_code' => (string)$actionCode
+        ];
+
+        foreach ($moduleKeys as $index => $moduleKey) {
+            $key = ':menu_key_' . $index;
+            $keyHolders[] = $key;
+            $params[$key] = $moduleKey;
+        }
+
+        foreach ($roleIds as $index => $roleId) {
+            $key = ':role_id_' . $index;
+            $roleHolders[] = $key;
+            $params[$key] = $roleId;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT 1
+            FROM role_base_access rba
+            INNER JOIN sidebar_menus sm ON sm.id = rba.menu_id
+            WHERE rba.status = 1
+            AND sm.status = 1
+            AND rba.role_id IN (" . implode(',', $roleHolders) . ")
+            AND sm.menu_key IN (" . implode(',', $keyHolders) . ")
+            AND FIND_IN_SET(:action_code, REPLACE(COALESCE(rba.access_actions, ''), ' ', '')) > 0
+            LIMIT 1
+        ");
+        $stmt->execute($params);
+
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function dlHasPermissionFallback($moduleKeys, $action)
+{
+    if (!function_exists('hasPermission')) {
+        return false;
+    }
+
+    if (!is_array($moduleKeys)) {
+        $moduleKeys = [$moduleKeys];
+    }
+
+    $actionCode = dlPermissionActionCode($action);
+    $actionName = dlPermissionActionName($actionCode);
+
+    foreach ($moduleKeys as $moduleKey) {
+        if ($moduleKey === '') {
+            continue;
+        }
+
+        try {
+            if (hasPermission($moduleKey, $actionCode) || hasPermission($moduleKey, $actionName)) {
+                return true;
+            }
+        } catch (Throwable $e) {
+            // Continue with next key.
+        }
+    }
+
+    return false;
+}
+
+function dlPermissionAllowed($moduleKeys, $action = 1)
+{
+    if (function_exists('isPlatformOwner') && isPlatformOwner()) {
+        return true;
+    }
+
+    if (!is_array($moduleKeys)) {
+        $moduleKeys = [$moduleKeys];
+    }
+
+    if (dlRoleBaseMenuRowsExist($moduleKeys)) {
+        return dlRoleBasePermissionAllowed($moduleKeys, $action);
+    }
+
+    return dlHasPermissionFallback($moduleKeys, $action);
+}
+
+function dlEntryTypePermissionKeys($entryType)
+{
+    switch ((string)$entryType) {
+        case 'sales':
+            return [
+                'sales',
+                'sales_list',
+                'all_sales_list',
+                'sales_bill_list',
+                'direct_sale_list',
+                'final_invoice_list'
+            ];
+
+        case 'customer_payment':
+            return [
+                'customer_payments',
+                'customer-payments',
+                'customers'
+            ];
+
+        case 'purchase':
+            return [
+                'purchase_form',
+                'purchase-form',
+                'purchases',
+                'purchase_list',
+                'purchase'
+            ];
+
+        case 'supplier_payment':
+            return [
+                'supplier_payments',
+                'supplier-payments',
+                'suppliers'
+            ];
+
+        case 'expense':
+            return [
+                'expenses',
+                'expense_list',
+                'expense'
+            ];
+
+        default:
+            return [];
+    }
+}
+
+function dlAllowedEntryTypes()
+{
+    $allowed = [];
+
+    foreach (['sales', 'customer_payment', 'purchase', 'supplier_payment', 'expense'] as $type) {
+        if (dlPermissionAllowed(dlEntryTypePermissionKeys($type), 1)
+            || dlPermissionAllowed(dlEntryTypePermissionKeys($type), 2)) {
+            $allowed[] = $type;
+        }
+    }
+
+    return $allowed;
 }
 
 function requireDailyLedgerPermission()
@@ -26,17 +388,40 @@ function requireDailyLedgerPermission()
         return;
     }
 
-    if (!function_exists('hasPermission')) {
+    if (dlPermissionAllowed(dlReportPermissionKeys(), 1)
+        || dlPermissionAllowed(dlReportPermissionKeys(), 2)
+        || !empty(dlAllowedEntryTypes())) {
         return;
     }
 
-    foreach (['daily_ledger_report', 'reports', 'purchases', 'sales', 'expenses', 'customer_payments', 'supplier_payments'] as $key) {
-        if (hasPermission($key, 'view')) {
-            return;
-        }
-    }
-
     jsonResponse(false, 'Permission denied.');
+}
+
+function getDailyLedgerPageContext(PDO $pdo)
+{
+    requireDailyLedgerPermission();
+
+    $allowedEntryTypes = dlAllowedEntryTypes();
+
+    jsonResponse(true, 'Daily ledger page context loaded.', [
+        'context' => [
+            'can_view' => dlPermissionAllowed(dlReportPermissionKeys(), 1) || !empty($allowedEntryTypes),
+            'can_list' => dlPermissionAllowed(dlReportPermissionKeys(), 2) || !empty($allowedEntryTypes),
+            'can_print' => dlPermissionAllowed(dlReportPermissionKeys(), 6),
+            'can_export' => dlPermissionAllowed(dlReportPermissionKeys(), 7),
+            'can_generate_report' => dlPermissionAllowed(dlReportPermissionKeys(), 31),
+            'allowed_entry_types' => $allowedEntryTypes,
+            'entry_type_labels' => [
+                'sales' => 'Sales',
+                'customer_payment' => 'Customer Payment',
+                'purchase' => 'Purchase',
+                'supplier_payment' => 'Supplier Payment',
+                'expense' => 'Expense'
+            ],
+            'page_title' => 'Daily Ledger Report',
+            'page_note' => 'Daily ledger entries are filtered by role permission.'
+        ]
+    ]);
 }
 
 function dlScope()
@@ -64,6 +449,18 @@ function listDailyLedgerReport(PDO $pdo)
     $toDate = dlCleanDate($_GET['to_date'] ?? date('Y-m-d'));
     $entryTypesRaw = $_GET['entry_types'] ?? ($_GET['entry_type'] ?? 'all');
     $entryTypes = dlParseEntryTypes($entryTypesRaw);
+    $allowedEntryTypes = dlAllowedEntryTypes();
+
+    if (!$allowedEntryTypes) {
+        jsonResponse(false, 'No daily ledger entry type permission available.');
+    }
+
+    $entryTypes = array_values(array_intersect($entryTypes, $allowedEntryTypes));
+
+    if (!$entryTypes) {
+        jsonResponse(false, 'Permission denied for selected ledger type.');
+    }
+
     $search = trim((string)($_GET['search'] ?? ''));
 
     if (!$fromDate) {
@@ -192,7 +589,11 @@ function listDailyLedgerReport(PDO $pdo)
             'entry_types' => $entryTypes,
             'entry_type_label' => dlEntryTypesLabel($entryTypes),
             'search' => $search
-        ]
+        ],
+        'allowed_entry_types' => $allowedEntryTypes,
+        'can_print' => dlPermissionAllowed(dlReportPermissionKeys(), 6),
+        'can_export' => dlPermissionAllowed(dlReportPermissionKeys(), 7),
+        'can_generate_report' => dlPermissionAllowed(dlReportPermissionKeys(), 31)
     ]);
 }
 

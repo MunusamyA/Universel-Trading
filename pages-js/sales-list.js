@@ -1,14 +1,21 @@
 $(document).ready(function () {
+
+    $('#preloader').fadeOut('slow');
+
     let listConfig = window.SALES_LIST_CONFIG || {};
     let documentType = parseInt(listConfig.document_type || 0);
     let documentTypes = listConfig.document_types || {};
     let permissions = listConfig.permissions || {};
+    let allowedDocumentTypes = [];
+    let viewDocumentTypes = [];
+    let listDocumentTypes = [];
 
     initSalesListPage();
     bindSalesListEvents();
 
     function initSalesListPage() {
         loadDocumentPermissions(function () {
+            applyNavigationPermissions();
             loadSalesList();
         });
     }
@@ -26,21 +33,14 @@ $(document).ready(function () {
             loadSalesList();
         });
 
-        $('#searchText').on('keyup', function (e) {
-            if (e.key === 'Enter') {
+        $('#searchText').on('keyup', function (event) {
+            if (event.key === 'Enter') {
                 loadSalesList();
             }
         });
 
         $(document).on('click', '.convert-doc-btn', function () {
             let id = parseInt($(this).attr('data-id') || $(this).data('id') || 0);
-
-            /*
-             * Source type must be the CURRENT document_type of this row.
-             * Do not use old source_document_type from previously generated rows.
-             * Otherwise api/sales.php throws:
-             * "Source document type mismatch. Please reload and try again."
-             */
             let sourceType = parseInt($(this).attr('data-source-type') || $(this).data('source-type') || 0);
             let targetType = parseInt($(this).attr('data-target-type') || $(this).data('target-type') || 0);
 
@@ -52,6 +52,16 @@ $(document).ready(function () {
                 'pages/sales.php?mode=convert&source_id=' + id +
                 '&source_type=' + sourceType +
                 '&target_type=' + targetType;
+        });
+
+        $(document).on('click', '.delete-sale-btn', function () {
+            let id = parseInt($(this).attr('data-id') || $(this).data('id') || 0);
+            handleSaleCloseAction(id, 'delete_sale', 'Delete this document?', 'Delete reason');
+        });
+
+        $(document).on('click', '.cancel-sale-btn', function () {
+            let id = parseInt($(this).attr('data-id') || $(this).data('id') || 0);
+            handleSaleCloseAction(id, 'cancel_sale', 'Cancel this document?', 'Cancel reason');
         });
     }
 
@@ -65,13 +75,13 @@ $(document).ready(function () {
             },
             success: function (response) {
                 if (response.status === true && response.data) {
-                    if (response.data.document_types) {
-                        documentTypes = response.data.document_types;
-                    }
-
-                    if (response.data.permissions) {
-                        permissions = response.data.permissions;
-                    }
+                    applyPermissionPayload(response.data);
+                } else {
+                    $('#salesListBody').html(
+                        '<tr><td colspan="11" class="text-center text-danger">' +
+                        escapeHtml(response.message || 'Permission denied.') +
+                        '</td></tr>'
+                    );
                 }
 
                 if (typeof callback === 'function') {
@@ -80,6 +90,7 @@ $(document).ready(function () {
             },
             error: function (xhr) {
                 console.log(xhr.responseText);
+                $('#salesListBody').html('<tr><td colspan="11" class="text-center text-danger">Server error.</td></tr>');
 
                 if (typeof callback === 'function') {
                     callback();
@@ -88,10 +99,66 @@ $(document).ready(function () {
         });
     }
 
+    function applyPermissionPayload(data) {
+        data = data || {};
+
+        if (data.document_types) {
+            documentTypes = data.document_types;
+        }
+
+        if (data.permissions) {
+            permissions = data.permissions;
+        }
+
+        allowedDocumentTypes = data.allowed_document_types || [];
+        viewDocumentTypes = data.view_document_types || [];
+        listDocumentTypes = data.list_document_types || [];
+
+        listConfig.can_add = data.can_add || false;
+        listConfig.can_view = data.can_view || false;
+        listConfig.can_list = data.can_list || false;
+    }
+
+    function applyNavigationPermissions() {
+        toggleByPermission('#newSalesEntryBtn', listConfig.can_add === true || listConfig.can_add === 1 || listConfig.can_add === '1');
+
+        toggleDocNav('#quotationListBtn', 1);
+        toggleDocNav('#proformaListBtn', 2);
+        toggleDocNav('#salesBillListBtn', 3);
+        toggleDocNav('#directSaleListBtn', 4);
+        toggleDocNav('#finalInvoiceListBtn', 5);
+
+        toggleByPermission('#overallSalesListBtn', hasAnyDocumentPermission('view') || hasAnyDocumentPermission('list'));
+
+        if (documentType > 0 && !docPermission(documentType, 'view') && !docPermission(documentType, 'list')) {
+            $('#salesListBody').html('<tr><td colspan="11" class="text-center text-danger">Permission denied.</td></tr>');
+        }
+    }
+
+    function toggleDocNav(selector, typeId) {
+        toggleByPermission(selector, docPermission(typeId, 'view') || docPermission(typeId, 'list'));
+    }
+
+    function toggleByPermission(selector, allowed) {
+        if (allowed) {
+            $(selector).removeClass('d-none');
+        } else {
+            $(selector).addClass('d-none');
+        }
+    }
+
     function loadSalesList() {
-        $('#salesListBody').html(
-            '<tr><td colspan="11" class="text-center text-muted">Loading...</td></tr>'
-        );
+        if (documentType > 0 && !docPermission(documentType, 'view') && !docPermission(documentType, 'list')) {
+            $('#salesListBody').html('<tr><td colspan="11" class="text-center text-danger">Permission denied.</td></tr>');
+            return;
+        }
+
+        if (documentType <= 0 && !hasAnyDocumentPermission('view') && !hasAnyDocumentPermission('list')) {
+            $('#salesListBody').html('<tr><td colspan="11" class="text-center text-danger">Permission denied.</td></tr>');
+            return;
+        }
+
+        $('#salesListBody').html('<tr><td colspan="11" class="text-center text-muted">Loading...</td></tr>');
 
         $.ajax({
             url: window.BASE_URL + 'api/sales.php',
@@ -107,12 +174,9 @@ $(document).ready(function () {
             },
             success: function (response) {
                 if (response.status === true) {
-                    if (response.data && response.data.document_types) {
-                        documentTypes = response.data.document_types;
-                    }
-
-                    if (response.data && response.data.permissions) {
-                        permissions = response.data.permissions;
+                    if (response.data) {
+                        applyPermissionPayload(response.data);
+                        applyNavigationPermissions();
                     }
 
                     renderSalesList((response.data && response.data.rows) ? response.data.rows : []);
@@ -126,9 +190,7 @@ $(document).ready(function () {
             },
             error: function (xhr) {
                 console.log(xhr.responseText);
-                $('#salesListBody').html(
-                    '<tr><td colspan="11" class="text-center text-danger">Server error.</td></tr>'
-                );
+                $('#salesListBody').html('<tr><td colspan="11" class="text-center text-danger">Server error.</td></tr>');
             }
         });
     }
@@ -137,9 +199,7 @@ $(document).ready(function () {
         updateCards(rows);
 
         if (!rows || rows.length === 0) {
-            $('#salesListBody').html(
-                '<tr><td colspan="11" class="text-center text-muted">No records found.</td></tr>'
-            );
+            $('#salesListBody').html('<tr><td colspan="11" class="text-center text-muted">No records found.</td></tr>');
             return;
         }
 
@@ -149,31 +209,19 @@ $(document).ready(function () {
             let docType = currentDocumentType(row);
             let converted = isConvertedToAnotherRow(row, docType);
 
-            html += `
-                <tr>
-                    <td>${index + 1}</td>
-
-                    <td>
-                        <strong>${escapeHtml(row.sales_no || '')}</strong><br>
-                        <span class="badge bg-soft-primary text-primary">${escapeHtml(documentLabel(docType))}</span>
-                    </td>
-
-                    <td>${formatDate(row.sales_date)}</td>
-
-                    <td>
-                        <strong>${escapeHtml(row.customer_name || '')}</strong><br>
-                        <small class="text-muted">${escapeHtml(row.customer_mobile || '')}</small>
-                    </td>
-
-                    <td class="text-end">${formatCurrency(row.sub_total || 0)}</td>
-                    <td class="text-end">${formatCurrency(row.tax_amount || 0)}</td>
-                    <td class="text-end"><strong>${formatCurrency(row.grand_total || 0)}</strong></td>
-                    <td class="text-end">${formatCurrency(row.paid_amount || 0)}</td>
-                    <td class="text-end">${formatCurrency(row.due_amount || 0)}</td>
-                    <td>${statusBadge(row.status, converted)}</td>
-                    <td class="text-end">${actionButtons(row, converted)}</td>
-                </tr>
-            `;
+            html += '<tr>';
+            html += '<td>' + (index + 1) + '</td>';
+            html += '<td><strong>' + escapeHtml(row.sales_no || '') + '</strong><br><span class="badge bg-soft-primary text-primary">' + escapeHtml(documentLabel(docType)) + '</span></td>';
+            html += '<td>' + formatDate(row.sales_date) + '</td>';
+            html += '<td><strong>' + escapeHtml(row.customer_name || '') + '</strong><br><small class="text-muted">' + escapeHtml(row.customer_mobile || '') + '</small></td>';
+            html += '<td class="text-end">' + formatCurrency(row.sub_total || 0) + '</td>';
+            html += '<td class="text-end">' + formatCurrency(row.tax_amount || 0) + '</td>';
+            html += '<td class="text-end"><strong>' + formatCurrency(row.grand_total || 0) + '</strong></td>';
+            html += '<td class="text-end">' + formatCurrency(row.paid_amount || 0) + '</td>';
+            html += '<td class="text-end">' + formatCurrency(row.due_amount || 0) + '</td>';
+            html += '<td>' + statusBadge(row.status, converted) + '</td>';
+            html += '<td class="text-end">' + actionButtons(row, converted) + '</td>';
+            html += '</tr>';
         });
 
         $('#salesListBody').html(html);
@@ -201,26 +249,15 @@ $(document).ready(function () {
     function currentDocumentType(row) {
         row = row || {};
 
-        let documentType = parseInt(row.document_type || 0);
+        let type = parseInt(row.document_type || 0);
         let convertedToDocumentType = parseInt(row.converted_to_document_type || 0);
         let convertedToSaleId = parseInt(row.converted_to_sale_id || 0);
 
-        /*
-         * Same-row generate flow:
-         * Your API updates the same sales.id and changes document_type.
-         * In some responses, converted_to_document_type may be newer than
-         * document_type. Use it only when this row was not converted into
-         * another sales row.
-         */
         if (convertedToSaleId <= 0 && convertedToDocumentType > 0) {
-            documentType = convertedToDocumentType;
+            type = convertedToDocumentType;
         }
 
-        return documentType;
-    }
-
-    function isGeneratedToAnotherRow(row, currentType) {
-        return isConvertedToAnotherRow(row, currentType);
+        return type;
     }
 
     function isConvertedToAnotherRow(row, currentType) {
@@ -234,10 +271,6 @@ $(document).ready(function () {
             return false;
         }
 
-        /*
-         * If API updates same row, converted_to_sale_id may be empty or same id.
-         * Only treat as generated/locked when it points to another document row.
-         */
         if (convertedToSaleId === id) {
             return false;
         }
@@ -252,150 +285,222 @@ $(document).ready(function () {
     function actionButtons(row, converted) {
         let id = parseInt(row.id || 0);
         let docType = currentDocumentType(row);
+        let dueAmount = parseFloat(row.due_amount || 0);
+        let status = parseInt(row.status || 0);
+        let closed = status === 3 || status === 4;
 
-        let html = `<div class="btn-group btn-group-sm">`;
+        let html = '<div class="btn-group btn-group-sm">';
 
-        if (docPermission(docType, 'view') || docPermission(docType, 'edit')) {
-            html += `
-                <a class="btn btn-outline-primary"
-                   href="${window.BASE_URL}pages/sales.php?id=${id}&mode=edit"
-                   title="Edit / View">
-                    <i class="mdi mdi-pencil"></i>
-                </a>
-            `;
+        /*
+         * Common row buttons are controlled by the row document type.
+         */
+        if (row.can_view || row.can_edit || docPermission(docType, 'view') || docPermission(docType, 'edit')) {
+            html += '<a class="btn btn-outline-primary" href="' + window.BASE_URL + 'pages/sales.php?id=' + id + '&mode=edit" title="Edit / View"><i class="mdi mdi-pencil"></i></a>';
         }
 
-        if (parseFloat(row.due_amount || 0) > 0) {
-            html += `
-                <a class="btn btn-outline-success"
-                   href="${window.BASE_URL}pages/customer-payments.php?sales_id=${id}"
-                   title="Receive Payment">
-                    <i class="mdi mdi-cash-plus"></i>
-                </a>
-            `;
+        if (!closed && dueAmount > 0 && (row.can_receive_payment || docPermission(docType, 'receive_payment'))) {
+            html += '<a class="btn btn-outline-success" href="' + window.BASE_URL + 'pages/customer-payments.php?sales_id=' + id + '" title="Receive Payment"><i class="mdi mdi-cash-plus"></i></a>';
         }
 
-        if (docPermission(docType, 'print')) {
-            html += `
-                <a class="btn btn-outline-danger"
-                   target="_blank"
-                   href="${window.BASE_URL}pages/sales-print.php?id=${id}&print=1"
-                   title="Print PDF">
-                    <i class="mdi mdi-file-pdf-box"></i>
-                </a>
-            `;
+        if (row.can_print || docPermission(docType, 'print')) {
+            html += '<a class="btn btn-outline-danger" target="_blank" href="' + window.BASE_URL + 'pages/sales-print.php?id=' + id + '&print=1" title="Print PDF"><i class="mdi mdi-file-pdf-box"></i></a>';
         }
 
-        if (!converted) {
-            if (docType === 1) {
-                if (docPermission(1, 'convert') && docPermission(2, 'add')) {
-                    html += `
-                        <button type="button"
-                                class="btn btn-outline-info convert-doc-btn"
-                                data-id="${id}"
-                                data-source-type="${docType}"
-                                data-target-type="2"
-                                title="Generate Proforma Bill">
-                            <i class="mdi mdi-file-document-plus-outline"></i>
-                        </button>
-                    `;
+        if (!closed && (row.can_cancel || docPermission(docType, 'cancel'))) {
+            html += '<button type="button" class="btn btn-outline-warning cancel-sale-btn" data-id="' + id + '" title="Cancel"><i class="mdi mdi-cancel"></i></button>';
+        }
+
+        if (!closed && (row.can_delete || docPermission(docType, 'delete'))) {
+            html += '<button type="button" class="btn btn-outline-danger delete-sale-btn" data-id="' + id + '" title="Delete"><i class="mdi mdi-delete"></i></button>';
+        }
+
+        if (!closed && !converted) {
+            let targetButtons = [
+                {
+                    target_type: 2,
+                    title: 'Generate Proforma Bill',
+                    btn: 'btn-outline-info',
+                    icon: 'mdi-file-document-plus-outline',
+                    actions: ['generate_proforma_bill']
+                },
+                {
+                    target_type: 3,
+                    title: 'Generate Sales Bill',
+                    btn: 'btn-outline-success',
+                    icon: 'mdi-receipt-text-plus-outline',
+                    actions: ['generate_sales_bill']
+                },
+                {
+                    target_type: 5,
+                    title: 'Generate Final Invoice',
+                    btn: 'btn-warning',
+                    icon: 'mdi-receipt-text-check-outline',
+                    actions: ['generate_invoice']
+                }
+            ];
+
+            $.each(targetButtons, function (_, target) {
+                if (target.target_type === docType) {
+                    return;
                 }
 
-                if (docPermission(1, 'convert') && docPermission(3, 'add')) {
-                    html += `
-                        <button type="button"
-                                class="btn btn-outline-success convert-doc-btn"
-                                data-id="${id}"
-                                data-source-type="${docType}"
-                                data-target-type="3"
-                                title="Generate Sales Bill">
-                            <i class="mdi mdi-receipt-text-plus-outline"></i>
-                        </button>
-                    `;
+                if (canGenerateToTarget(docType, target.target_type, target.actions)) {
+                    html += convertButton(id, docType, target.target_type, target.btn, target.icon, target.title);
                 }
+            });
+        }
 
-                if (docPermission(1, 'generate_invoice') && docPermission(5, 'add')) {
-                    html += `
-                        <button type="button"
-                                class="btn btn-warning convert-doc-btn"
-                                data-id="${id}"
-                                data-source-type="${docType}"
-                                data-target-type="5"
-                                title="Generate Final Invoice">
-                            <i class="mdi mdi-receipt-text-check-outline"></i>
-                        </button>
-                    `;
-                }
-            } else if (docType === 2) {
-                if (docPermission(2, 'convert') && docPermission(3, 'add')) {
-                    html += `
-                        <button type="button"
-                                class="btn btn-outline-success convert-doc-btn"
-                                data-id="${id}"
-                                data-source-type="${docType}"
-                                data-target-type="3"
-                                title="Generate Sales Bill">
-                            <i class="mdi mdi-receipt-text-plus-outline"></i>
-                        </button>
-                    `;
-                }
+        html += '</div>';
 
-                if (docPermission(2, 'generate_invoice') && docPermission(5, 'add')) {
-                    html += `
-                        <button type="button"
-                                class="btn btn-warning convert-doc-btn"
-                                data-id="${id}"
-                                data-source-type="${docType}"
-                                data-target-type="5"
-                                title="Generate Final Invoice">
-                            <i class="mdi mdi-receipt-text-check-outline"></i>
-                        </button>
-                    `;
-                }
-            } else if (docType === 3) {
-                if (docPermission(3, 'generate_invoice') && docPermission(5, 'add')) {
-                    html += `
-                        <button type="button"
-                                class="btn btn-warning convert-doc-btn"
-                                data-id="${id}"
-                                data-source-type="${docType}"
-                                data-target-type="5"
-                                title="Generate Final Invoice">
-                            <i class="mdi mdi-receipt-text-check-outline"></i>
-                        </button>
-                    `;
-                }
+        if (html === '<div class="btn-group btn-group-sm"></div>') {
+            return '<span class="text-muted">No access</span>';
+        }
+
+        return html;
+    }
+
+    function convertButton(id, sourceType, targetType, btnClass, iconClass, title) {
+        return '<button type="button" class="btn ' + btnClass + ' convert-doc-btn" data-id="' + id + '" data-source-type="' + sourceType + '" data-target-type="' + targetType + '" title="' + title + '"><i class="mdi ' + iconClass + '"></i></button>';
+    }
+
+    function allowedGenerateTargetsForSource(sourceType) {
+        sourceType = parseInt(sourceType || 0);
+
+        if (sourceType === 1) {
+            return [2, 3, 5];
+        }
+
+        if (sourceType === 2) {
+            return [3, 5];
+        }
+
+        if (sourceType === 3) {
+            return [5];
+        }
+
+        return [];
+    }
+
+    function canGenerateToTarget(sourceType, targetType, targetGenerateActions) {
+        /*
+         * Final source-row based generate rule:
+         * Quotation  -> Proforma / Sales Bill / Final Invoice
+         * Proforma   -> Sales Bill / Final Invoice
+         * Sales Bill -> Final Invoice
+         */
+        sourceType = parseInt(sourceType || 0);
+        targetType = parseInt(targetType || 0);
+        targetGenerateActions = targetGenerateActions || [];
+
+        if (sourceType <= 0 || targetType <= 0 || sourceType === targetType) {
+            return false;
+        }
+
+        if ($.inArray(targetType, allowedGenerateTargetsForSource(sourceType)) === -1) {
+            return false;
+        }
+
+        for (let i = 0; i < targetGenerateActions.length; i++) {
+            if (docPermission(sourceType, targetGenerateActions[i])) {
+                return true;
             }
         }
 
-        html += `</div>`;
-        return html;
+        return false;
+    }
+
+    function getSalesListCsrfToken() {
+        return $('input[name="csrf_token"]').first().val()
+            || $('meta[name="csrf-token"]').attr('content')
+            || window.CSRF_TOKEN
+            || '';
+    }
+
+    function handleSaleCloseAction(id, apiAction, confirmTitle, reasonLabel) {
+        if (id <= 0) {
+            return;
+        }
+
+        let runRequest = function (reason) {
+            $.ajax({
+                url: window.BASE_URL + 'api/sales.php',
+                type: 'POST',
+                dataType: 'json',
+                data: {
+                    action: apiAction,
+                    id: id,
+                    reason: reason || '',
+                    csrf_token: getSalesListCsrfToken()
+                },
+                success: function (response) {
+                    if (response.status === true) {
+                        showListToast('success', response.message || 'Updated successfully.');
+                        loadSalesList();
+                    } else {
+                        showListToast('error', response.message || 'Unable to update.');
+                    }
+                },
+                error: function (xhr) {
+                    console.log(xhr.responseText);
+                    showListToast('error', 'Server error.');
+                }
+            });
+        };
+
+        if (typeof Swal !== 'undefined') {
+            Swal.fire({
+                title: confirmTitle,
+                input: 'text',
+                inputPlaceholder: reasonLabel,
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: 'Yes',
+                cancelButtonText: 'No'
+            }).then(function (result) {
+                if (result.isConfirmed) {
+                    runRequest(result.value || '');
+                }
+            });
+            return;
+        }
+
+        if (confirm(confirmTitle)) {
+            runRequest(prompt(reasonLabel, '') || '');
+        }
+    }
+
+    function showListToast(type, message) {
+        if (typeof showToast === 'function') {
+            showToast(type, message, 5000);
+            return;
+        }
+
+        alert(message);
+    }
+
+    function hasAnyDocumentPermission(action) {
+        for (let typeId = 1; typeId <= 5; typeId++) {
+            if (docPermission(typeId, action)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     function docPermission(typeId, action) {
         typeId = parseInt(typeId || 0);
 
-        /*
-         * Flexible permission checker.
-         * Supports API payload keys:
-         *   permissions[1].convert
-         *   permissions[1].can_convert
-         *   permissions.sales_quotation.can_convert
-         *   permissions.sales_proforma_bill.can_generate_invoice
-         *
-         * If the permission payload is incomplete, show the button.
-         * Backend still validates on save/generate.
-         */
         if (!permissions || Object.keys(permissions).length === 0) {
-            return true;
+            return false;
         }
 
         let menuKeys = {
-            1: ['1', 1, 'sales_quotation', 'quotation', 'quotation_list'],
-            2: ['2', 2, 'sales_proforma_bill', 'proforma_bill', 'proforma_bill_list'],
-            3: ['3', 3, 'sales_bill', 'sale_order', 'sales_bill_list'],
-            4: ['4', 4, 'sales_direct_sale', 'direct_sale', 'direct_sale_list'],
-            5: ['5', 5, 'sales_final_invoice', 'sales_invoice', 'final_invoice_list']
+            1: ['1', 1, 'sales_quotation', 'quotation', 'quotation_list', 'sales_quotation_list'],
+            2: ['2', 2, 'sales_proforma_bill', 'proforma_bill', 'proforma_bill_list', 'sales_proforma_bill_list'],
+            3: ['3', 3, 'sales_bill', 'sale_order', 'sales-bill', 'sales_bill_list'],
+            4: ['4', 4, 'sales_direct_sale', 'direct_sale', 'direct_sale_list', 'sales_direct_sale_list'],
+            5: ['5', 5, 'sales_final_invoice', 'sales_invoice', 'final_invoice_list', 'sales_final_invoice_list']
         };
 
         let actionKeys = [action, 'can_' + action];
@@ -405,6 +510,28 @@ $(document).ready(function () {
             actionKeys.push('can_generate');
             actionKeys.push('invoice');
             actionKeys.push('can_invoice');
+        }
+
+        if (action === 'generate_proforma_bill') {
+            actionKeys.push('generate_proforma');
+            actionKeys.push('can_generate_proforma');
+            actionKeys.push('generate_proforma_bill');
+            actionKeys.push('can_generate_proforma_bill');
+        }
+
+        if (action === 'generate_quotation') {
+            actionKeys.push('generate_quotation');
+            actionKeys.push('can_generate_quotation');
+        }
+
+        if (action === 'generate_sale_order') {
+            actionKeys.push('generate_sale_order');
+            actionKeys.push('can_generate_sale_order');
+        }
+
+        if (action === 'generate_sales_bill') {
+            actionKeys.push('generate_sales_bill');
+            actionKeys.push('can_generate_sales_bill');
         }
 
         let keys = menuKeys[typeId] || [String(typeId), typeId];
@@ -429,7 +556,7 @@ $(document).ready(function () {
             }
         }
 
-        return true;
+        return false;
     }
 
     function documentLabel(typeId) {
@@ -457,10 +584,21 @@ $(document).ready(function () {
 
         status = parseInt(status || 0);
 
-        if (status === 1) return '<span class="badge bg-success">Active</span>';
-        if (status === 2) return '<span class="badge bg-primary">Final</span>';
-        if (status === 3) return '<span class="badge bg-danger">Deleted</span>';
-        if (status === 4) return '<span class="badge bg-warning text-dark">Cancelled</span>';
+        if (status === 1) {
+            return '<span class="badge bg-success">Active</span>';
+        }
+
+        if (status === 2) {
+            return '<span class="badge bg-primary">Final</span>';
+        }
+
+        if (status === 3) {
+            return '<span class="badge bg-danger">Deleted</span>';
+        }
+
+        if (status === 4) {
+            return '<span class="badge bg-warning text-dark">Cancelled</span>';
+        }
 
         return '<span class="badge bg-secondary">Unknown</span>';
     }
@@ -472,19 +610,16 @@ $(document).ready(function () {
         });
     }
 
-    function formatDate(date) {
-        if (!date) return '-';
-
-        let parts = String(date).split('-');
-
-        if (parts.length !== 3) {
-            return escapeHtml(date);
+    function formatDate(value) {
+        if (!value) {
+            return '';
         }
 
-        return parts[2] + '-' + parts[1] + '-' + parts[0];
+        return escapeHtml(value);
     }
 
     function escapeHtml(value) {
-        return $('<div>').text(value == null ? '' : value).html();
+        return $('<div>').text(value === null || value === undefined ? '' : value).html();
     }
+
 });

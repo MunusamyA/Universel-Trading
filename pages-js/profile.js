@@ -1,15 +1,34 @@
 $(document).ready(function () {
+
     $('#preloader').fadeOut('slow');
+
+    let profileContext = {
+        can_view: false,
+        can_edit: false,
+        can_change_password: false
+    };
 
     loadProfile();
 
     $('#profileForm').on('submit', function (e) {
         e.preventDefault();
+
+        if (!profileContext.can_edit) {
+            showToastSafe('error', 'Permission denied.');
+            return false;
+        }
+
         saveProfile();
     });
 
     $('#passwordForm').on('submit', function (e) {
         e.preventDefault();
+
+        if (!profileContext.can_change_password) {
+            showToastSafe('error', 'Permission denied.');
+            return false;
+        }
+
         changePassword();
     });
 
@@ -21,16 +40,43 @@ $(document).ready(function () {
             data: { action: 'get_profile' },
             success: function (response) {
                 if (response.status === true) {
+                    profileContext = response.data.context || profileContext;
                     renderProfile(response.data.user || {});
+                    applyProfilePermissionContext();
                 } else {
                     handleError(response);
+                    disableProfileForms();
                 }
             },
             error: function (xhr) {
                 console.log(xhr.responseText);
                 showToastSafe('error', 'Server error while loading profile.');
+                disableProfileForms();
             }
         });
+    }
+
+    function applyProfilePermissionContext() {
+        if (profileContext.can_edit) {
+            $('#profileForm').find('input, select, textarea').not('[readonly]').prop('disabled', false);
+            $('#saveProfileBtn').removeClass('d-none').prop('disabled', false);
+        } else {
+            $('#profileForm').find('input, select, textarea').not('[readonly]').prop('disabled', true);
+            $('#saveProfileBtn').addClass('d-none').prop('disabled', true);
+        }
+
+        if (profileContext.can_change_password) {
+            $('#passwordForm').find('input, button').prop('disabled', false);
+            $('#changePasswordBtn').removeClass('d-none').prop('disabled', false);
+        } else {
+            $('#passwordForm').find('input, button').prop('disabled', true);
+            $('#changePasswordBtn').addClass('d-none').prop('disabled', true);
+        }
+    }
+
+    function disableProfileForms() {
+        $('#profileForm, #passwordForm').find('input, select, textarea, button').prop('disabled', true);
+        $('#saveProfileBtn, #changePasswordBtn').addClass('d-none');
     }
 
     function saveProfile() {
@@ -59,11 +105,13 @@ $(document).ready(function () {
                 }
 
                 $('#saveProfileBtn').prop('disabled', false).html('<i class="mdi mdi-content-save me-1"></i> Save Profile');
+                applyProfilePermissionContext();
             },
             error: function (xhr) {
                 console.log(xhr.responseText);
                 showToastSafe('error', 'Server error while saving profile.');
                 $('#saveProfileBtn').prop('disabled', false).html('<i class="mdi mdi-content-save me-1"></i> Save Profile');
+                applyProfilePermissionContext();
             }
         });
 
@@ -97,11 +145,13 @@ $(document).ready(function () {
                 }
 
                 $('#changePasswordBtn').prop('disabled', false).html('<i class="mdi mdi-lock-reset me-1"></i> Change Password');
+                applyProfilePermissionContext();
             },
             error: function (xhr) {
                 console.log(xhr.responseText);
                 showToastSafe('error', 'Server error while changing password.');
                 $('#changePasswordBtn').prop('disabled', false).html('<i class="mdi mdi-lock-reset me-1"></i> Change Password');
+                applyProfilePermissionContext();
             }
         });
 
@@ -133,9 +183,11 @@ $(document).ready(function () {
 
     function makeInitials(value) {
         value = $.trim(value || '');
+
         if (value === '') return 'U';
 
         let parts = value.split(/\s+/);
+
         if (parts.length === 1) {
             return parts[0].substring(0, 2).toUpperCase();
         }
@@ -145,12 +197,14 @@ $(document).ready(function () {
 
     function formatUserType(type) {
         if (type === 'platform_owner') return 'Platform Owner';
+
         return 'Business User';
     }
 
     function warn(msg, selector) {
         showToastSafe('warning', msg);
         $(selector).focus();
+
         return false;
     }
 

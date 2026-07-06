@@ -10,14 +10,19 @@ $page_title = 'Customers | Universal ERP';
 ?>
 <!doctype html>
 <html lang="en">
+
 <head>
     <?php include BASE_PATH . 'includes/head.php'; ?>
 </head>
 
 <body data-sidebar="dark">
+
 <?php include BASE_PATH . 'includes/pre-loader.php'; ?>
 
+<?= csrfTokenInput(); ?>
+
 <div id="layout-wrapper">
+
     <?php include BASE_PATH . 'includes/topbar.php'; ?>
 
     <div class="vertical-menu">
@@ -27,19 +32,27 @@ $page_title = 'Customers | Universal ERP';
     </div>
 
     <div class="main-content">
+
         <div class="page-content">
             <div class="container-fluid">
 
                 <div class="row">
                     <div class="col-12">
+
                         <div class="page-title-box d-flex align-items-center justify-content-between">
-                            <h4 class="mb-0">Customers</h4>
+                            <div>
+                                <h4 class="mb-0" id="pageTitleText">Customers</h4>
+                                <p class="text-muted mb-0 mt-1" id="pageNoteText">Loading...</p>
+                            </div>
+
                             <div class="page-title-right">
-                                <a href="<?= BASE_URL; ?>pages/customers-create.php" class="btn btn-primary">
-                                    <i class="mdi mdi-plus me-1"></i> Add Customer
+                                <a href="<?= BASE_URL; ?>pages/customers-create.php" class="btn btn-primary d-none" id="addCustomerBtn">
+                                    <i class="mdi mdi-plus me-1"></i>
+                                    <span id="addCustomerBtnText">Add Customer</span>
                                 </a>
                             </div>
                         </div>
+
                     </div>
                 </div>
 
@@ -52,6 +65,7 @@ $page_title = 'Customers | Universal ERP';
                             </div>
                         </div>
                     </div>
+
                     <div class="col-md-6 col-xl-3">
                         <div class="card text-center">
                             <div class="card-body text-muted">
@@ -60,6 +74,7 @@ $page_title = 'Customers | Universal ERP';
                             </div>
                         </div>
                     </div>
+
                     <div class="col-md-6 col-xl-3">
                         <div class="card text-center">
                             <div class="card-body text-muted">
@@ -68,6 +83,7 @@ $page_title = 'Customers | Universal ERP';
                             </div>
                         </div>
                     </div>
+
                     <div class="col-md-6 col-xl-3">
                         <div class="card text-center">
                             <div class="card-body text-muted">
@@ -80,17 +96,20 @@ $page_title = 'Customers | Universal ERP';
 
                 <div class="card">
                     <div class="card-body">
+
                         <div class="row align-items-end mb-3">
                             <div class="col-md-4">
                                 <label class="form-label">Search</label>
                                 <input type="text" class="form-control" id="customerSearch" placeholder="Name / Mobile / GST / Zone">
                             </div>
+
                             <div class="col-md-3">
                                 <label class="form-label">Zone</label>
                                 <select class="form-select" id="zoneFilter">
                                     <option value="0">All Zones</option>
                                 </select>
                             </div>
+
                             <div class="col-md-2">
                                 <label class="form-label">Status</label>
                                 <select class="form-select" id="customerStatusFilter">
@@ -99,6 +118,7 @@ $page_title = 'Customers | Universal ERP';
                                     <option value="2">Inactive</option>
                                 </select>
                             </div>
+
                             <div class="col-md-3 text-end">
                                 <button type="button" class="btn btn-light" id="refreshCustomersBtn">
                                     <i class="mdi mdi-refresh me-1"></i> Refresh
@@ -109,39 +129,59 @@ $page_title = 'Customers | Universal ERP';
                         <div class="table-responsive">
                             <table class="table table-centered table-nowrap mb-0">
                                 <thead>
-                                <tr>
-                                    <th width="60">#</th>
-                                    <th>Customer</th>
-                                    <th>Zone</th>
-                                    <th>Contact</th>
-                                    <th>GST</th>
-                                    <th class="text-end">Outstanding</th>
-                                    <th>Status</th>
-                                    <th width="170" class="text-end">Action</th>
-                                </tr>
+                                    <tr>
+                                        <th width="60">#</th>
+                                        <th>Customer</th>
+                                        <th>Zone</th>
+                                        <th>Contact</th>
+                                        <th>GST</th>
+                                        <th class="text-end">Outstanding</th>
+                                        <th>Status</th>
+                                        <th width="170" class="text-end">Action</th>
+                                    </tr>
                                 </thead>
+
                                 <tbody id="customerTableBody">
-                                <tr>
-                                    <td colspan="8" class="text-center text-muted">Loading...</td>
-                                </tr>
+                                    <tr>
+                                        <td colspan="8" class="text-center text-muted">Loading...</td>
+                                    </tr>
                                 </tbody>
                             </table>
                         </div>
+
                     </div>
                 </div>
 
             </div>
         </div>
+
         <?php include BASE_PATH . 'includes/footer.php'; ?>
+
     </div>
 </div>
 
-<?php include BASE_PATH . 'includes/rightbar.php'; ?>
-<?php include BASE_PATH . 'includes/scripts.php'; ?>
+<?php
+$rightbarPath1 = BASE_PATH . 'includes/rightbar.php';
+
+if (file_exists($rightbarPath1)) {
+    include $rightbarPath1;
+}
+?>
+
+<?php
+$scriptsPath1 = BASE_PATH . 'includes/scripts.php';
+
+if (file_exists($scriptsPath1)) {
+    include $scriptsPath1;
+}
+?>
 
 <script>
-    window.BASE_URL = "<?= BASE_URL; ?>";
+    window.BASE_URL = <?= json_encode(BASE_URL); ?>;
+    window.MASTER_FILE = "customers";
 </script>
+
 <script src="<?= BASE_URL; ?>pages-js/customers.js?v=<?= time(); ?>"></script>
+
 </body>
 </html>

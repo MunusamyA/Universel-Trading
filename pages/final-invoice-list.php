@@ -6,21 +6,24 @@ require_once BASE_PATH . 'includes/auth.php';
 secureSessionStart();
 requireLogin();
 
-$page_title = 'Final Invoice List | Universal ERP';
+$page_title = 'Final Invoice List' . ' | Universal ERP';
 $listTitle = 'Final Invoice List';
 $listDescription = 'List of final invoice documents';
 $currentDocumentType = 5;
 ?>
 <!doctype html>
 <html lang="en">
+
 <head>
     <?php include BASE_PATH . 'includes/head.php'; ?>
 </head>
 
 <body data-sidebar="dark">
+
 <?php include BASE_PATH . 'includes/pre-loader.php'; ?>
 
 <div id="layout-wrapper">
+
     <?php include BASE_PATH . 'includes/topbar.php'; ?>
 
     <div class="vertical-menu">
@@ -30,47 +33,50 @@ $currentDocumentType = 5;
     </div>
 
     <div class="main-content">
+
         <div class="page-content">
             <div class="container-fluid">
 
                 <div class="row">
                     <div class="col-12">
+
                         <div class="page-title-box d-flex align-items-center justify-content-between">
                             <div>
-                                <h4 class="mb-0"><?= htmlspecialchars($listTitle); ?></h4>
-                                <small class="text-muted"><?= htmlspecialchars($listDescription); ?></small>
+                                <h4 class="mb-0" id="salesListTitle"><?= htmlspecialchars($listTitle); ?></h4>
+                                <small class="text-muted" id="salesListDescription"><?= htmlspecialchars($listDescription); ?></small>
                             </div>
 
                             <div class="d-flex flex-wrap gap-2">
-                                <a href="<?= BASE_URL; ?>pages/sales.php" class="btn btn-primary">
+                                <a href="<?= BASE_URL; ?>pages/sales.php" class="btn btn-primary d-none" id="newSalesEntryBtn">
                                     <i class="mdi mdi-plus me-1"></i> New Sales Entry
                                 </a>
 
-                                <a href="<?= BASE_URL; ?>pages/quotation-list.php" class="btn btn-outline-primary">
+                                <a href="<?= BASE_URL; ?>pages/quotation-list.php" class="btn btn-outline-primary d-none sales-doc-nav" id="quotationListBtn" data-doc-type="1">
                                     <i class="mdi mdi-file-edit-outline me-1"></i> Quotation
                                 </a>
 
-                                <a href="<?= BASE_URL; ?>pages/proforma-bill-list.php" class="btn btn-outline-info">
+                                <a href="<?= BASE_URL; ?>pages/proforma-bill-list.php" class="btn btn-outline-info d-none sales-doc-nav" id="proformaListBtn" data-doc-type="2">
                                     <i class="mdi mdi-file-document-outline me-1"></i> Proforma
                                 </a>
 
-                                <a href="<?= BASE_URL; ?>pages/sales-list.php" class="btn btn-outline-success">
+                                <a href="<?= BASE_URL; ?>pages/sales-list.php" class="btn btn-outline-success d-none sales-doc-nav" id="salesBillListBtn" data-doc-type="3">
                                     <i class="mdi mdi-receipt-text-outline me-1"></i> Sales Bill
                                 </a>
 
-                                <a href="<?= BASE_URL; ?>pages/direct-sale-list.php" class="btn btn-outline-warning">
+                                <a href="<?= BASE_URL; ?>pages/direct-sale-list.php" class="btn btn-outline-warning d-none sales-doc-nav" id="directSaleListBtn" data-doc-type="4">
                                     <i class="mdi mdi-cart-arrow-right me-1"></i> Direct Sale
                                 </a>
 
-                                <a href="<?= BASE_URL; ?>pages/final-invoice-list.php" class="btn btn-outline-dark">
+                                <a href="<?= BASE_URL; ?>pages/final-invoice-list.php" class="btn btn-outline-dark d-none sales-doc-nav" id="finalInvoiceListBtn" data-doc-type="5">
                                     <i class="mdi mdi-receipt-text-check-outline me-1"></i> Final Invoice
                                 </a>
 
-                                <a href="<?= BASE_URL; ?>pages/all-sales-list.php" class="btn btn-light">
+                                <a href="<?= BASE_URL; ?>pages/all-sales-list.php" class="btn btn-light d-none" id="overallSalesListBtn">
                                     <i class="mdi mdi-format-list-bulleted me-1"></i> Overall List
                                 </a>
                             </div>
                         </div>
+
                     </div>
                 </div>
 
@@ -156,25 +162,25 @@ $currentDocumentType = 5;
                         <div class="table-responsive">
                             <table class="table table-centered table-nowrap mb-0">
                                 <thead>
-                                <tr>
-                                    <th>#</th>
-                                    <th>Document No</th>
-                                    <th>Date</th>
-                                    <th>Customer</th>
-                                    <th class="text-end">Sub Total</th>
-                                    <th class="text-end">GST</th>
-                                    <th class="text-end">Grand Total</th>
-                                    <th class="text-end">Paid</th>
-                                    <th class="text-end">Due</th>
-                                    <th>Status</th>
-                                    <th width="180" class="text-end">Action</th>
-                                </tr>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Document No</th>
+                                        <th>Date</th>
+                                        <th>Customer</th>
+                                        <th class="text-end">Sub Total</th>
+                                        <th class="text-end">GST</th>
+                                        <th class="text-end">Grand Total</th>
+                                        <th class="text-end">Paid</th>
+                                        <th class="text-end">Due</th>
+                                        <th>Status</th>
+                                        <th width="180" class="text-end">Action</th>
+                                    </tr>
                                 </thead>
 
                                 <tbody id="salesListBody">
-                                <tr>
-                                    <td colspan="11" class="text-center text-muted">Loading...</td>
-                                </tr>
+                                    <tr>
+                                        <td colspan="11" class="text-center text-muted">Loading...</td>
+                                    </tr>
                                 </tbody>
                             </table>
                         </div>
@@ -186,20 +192,39 @@ $currentDocumentType = 5;
         </div>
 
         <?php include BASE_PATH . 'includes/footer.php'; ?>
+
     </div>
 </div>
 
-<?php include BASE_PATH . 'includes/rightbar.php'; ?>
-<?php include BASE_PATH . 'includes/scripts.php'; ?>
+
+<?= csrfTokenInput(); ?>
+
+<?php
+$rightbarPath1 = BASE_PATH . 'includes/rightbar.php';
+
+if (file_exists($rightbarPath1)) {
+    include $rightbarPath1;
+}
+?>
+
+<?php
+$scriptsPath1 = BASE_PATH . 'includes/scripts.php';
+
+if (file_exists($scriptsPath1)) {
+    include $scriptsPath1;
+}
+?>
 
 <script>
-    window.BASE_URL = "<?= BASE_URL; ?>";
+    window.BASE_URL = <?= json_encode(BASE_URL); ?>;
     window.SALES_LIST_CONFIG = {
         document_type: <?= (int)$currentDocumentType; ?>,
         document_types: {},
         permissions: {}
     };
 </script>
+
 <script src="<?= BASE_URL; ?>pages-js/sales-list.js?v=<?= time(); ?>"></script>
+
 </body>
 </html>

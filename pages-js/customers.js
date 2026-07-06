@@ -1,10 +1,23 @@
 $(document).ready(function () {
+
     $('#preloader').fadeOut('slow');
 
     let searchTimer = null;
 
-    loadZones();
-    loadCustomers();
+    let pageContext = {
+        can_view: false,
+        can_list: false,
+        can_add: false,
+        can_edit: false,
+        can_delete: false,
+        can_receive_payment: false,
+        page_title: 'Customers',
+        page_note: '',
+        add_button_label: 'Add Customer',
+        add_url: ''
+    };
+
+    loadPageContext();
 
     $('#refreshCustomersBtn').on('click', function () {
         loadCustomers();
@@ -16,12 +29,15 @@ $(document).ready(function () {
 
     $('#customerSearch').on('keyup', function () {
         clearTimeout(searchTimer);
-        searchTimer = setTimeout(function () {
-            loadCustomers();
-        }, 400);
+        searchTimer = setTimeout(loadCustomers, 400);
     });
 
     $(document).on('click', '.delete-customer-btn', function () {
+        if (!pageContext.can_delete) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         let customerId = $(this).data('id');
 
         if (!confirm('Are you sure you want to delete this customer?')) {
@@ -29,7 +45,7 @@ $(document).ready(function () {
         }
 
         $.ajax({
-            url: window.BASE_URL + 'api/customers.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'POST',
             dataType: 'json',
             data: {
@@ -52,11 +68,59 @@ $(document).ready(function () {
         });
     });
 
+    function loadPageContext() {
+        $.ajax({
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
+            type: 'GET',
+            dataType: 'json',
+            data: {
+                action: 'get_page_context'
+            },
+            success: function (response) {
+                if (response.status === true) {
+                    pageContext = response.data.context || pageContext;
+                    applyPageContext();
+                    loadZones();
+                    loadCustomers();
+                } else {
+                    $('#customerTableBody').html('<tr><td colspan="8" class="text-center text-danger">' + escapeHtml(response.message || 'Permission denied.') + '</td></tr>');
+                    $('#addCustomerBtn').addClass('d-none');
+                }
+            },
+            error: function (xhr) {
+                console.log(xhr.responseText);
+                $('#customerTableBody').html('<tr><td colspan="8" class="text-center text-danger">Server error.</td></tr>');
+                $('#addCustomerBtn').addClass('d-none');
+            }
+        });
+    }
+
+    function applyPageContext() {
+        $('#pageTitleText').text(pageContext.page_title || 'Customers');
+        $('#pageNoteText').text(pageContext.page_note || '');
+        $('#addCustomerBtnText').text(pageContext.add_button_label || 'Add Customer');
+
+        if (pageContext.add_url) {
+            $('#addCustomerBtn').attr('href', pageContext.add_url);
+        }
+
+        if (pageContext.can_add) {
+            $('#addCustomerBtn').removeClass('d-none');
+        } else {
+            $('#addCustomerBtn').addClass('d-none');
+        }
+    }
+
     function loadCustomers() {
+        if (!pageContext.can_view && !pageContext.can_list) {
+            $('#customerTableBody').html('<tr><td colspan="8" class="text-center text-danger">Permission denied.</td></tr>');
+            return;
+        }
+
         $('#customerTableBody').html('<tr><td colspan="8" class="text-center text-muted">Loading...</td></tr>');
 
         $.ajax({
-            url: window.BASE_URL + 'api/customers.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
             data: {
@@ -70,7 +134,7 @@ $(document).ready(function () {
                     renderCustomerRows(response.data.customers || []);
                     renderStats(response.data.stats || {});
                 } else {
-                    $('#customerTableBody').html(`<tr><td colspan="8" class="text-center text-danger">${escapeHtml(response.message || 'Unable to load customers.')}</td></tr>`);
+                    $('#customerTableBody').html('<tr><td colspan="8" class="text-center text-danger">' + escapeHtml(response.message || 'Unable to load customers.') + '</td></tr>');
                 }
             },
             error: function (xhr) {
@@ -89,39 +153,43 @@ $(document).ready(function () {
         let html = '';
 
         $.each(customers, function (index, customer) {
-            html += `
-                <tr>
-                    <td>${index + 1}</td>
-                    <td>
-                        <h6 class="mb-0">${escapeHtml(customer.customer_name || '')}</h6>
-                        <small class="text-muted">${escapeHtml(formatAddress(customer))}</small>
-                    </td>
-                    <td>
-                        <div>${escapeHtml(customer.zone_name || '-')}</div>
-                        <small class="text-muted">${escapeHtml(customer.zone_code || '')}</small>
-                    </td>
-                    <td>
-                        <div>${escapeHtml(customer.mobile || '-')}</div>
-                        <small class="text-muted">${escapeHtml(customer.email || '')}</small>
-                    </td>
-                    <td>${escapeHtml(customer.gst_number || '-')}</td>
-                    <td class="text-end"><strong>${formatCurrency(customer.current_outstanding)}</strong></td>
-                    <td>${statusBadge(customer.status)}</td>
-                    <td class="text-end">
-                        <div class="btn-group btn-group-sm">
-                            <a class="btn btn-outline-success" href="${window.BASE_URL}pages/customer-payments.php?customer_id=${customer.id}" title="Payment">
-                                <i class="mdi mdi-cash-plus"></i>
-                            </a>
-                            <a class="btn btn-outline-primary" href="${window.BASE_URL}pages/customers-create.php?id=${customer.id}" title="Edit">
-                                <i class="mdi mdi-pencil"></i>
-                            </a>
-                            <button type="button" class="btn btn-outline-danger delete-customer-btn" data-id="${customer.id}" title="Delete">
-                                <i class="mdi mdi-delete"></i>
-                            </button>
-                        </div>
-                    </td>
-                </tr>
-            `;
+            let actionHtml = '';
+
+            if (customer.can_receive_payment) {
+                actionHtml += '<a class="btn btn-outline-success btn-sm" href="' + window.BASE_URL + 'pages/customer-payments.php?customer_id=' + customer.id + '" title="Payment"><i class="mdi mdi-cash-plus"></i></a>';
+            }
+
+            if (customer.can_edit) {
+                actionHtml += '<a class="btn btn-outline-primary btn-sm ms-1" href="' + window.BASE_URL + 'pages/customers-create.php?id=' + customer.id + '" title="Edit"><i class="mdi mdi-pencil"></i></a>';
+            }
+
+            if (customer.can_delete) {
+                actionHtml += '<button type="button" class="btn btn-outline-danger btn-sm ms-1 delete-customer-btn" data-id="' + customer.id + '" title="Delete"><i class="mdi mdi-delete"></i></button>';
+            }
+
+            if (actionHtml === '') {
+                actionHtml = '<span class="text-muted">No access</span>';
+            }
+
+            html += '<tr>';
+            html += '<td>' + (index + 1) + '</td>';
+            html += '<td>';
+            html += '<h6 class="mb-0">' + escapeHtml(customer.customer_name || '') + '</h6>';
+            html += '<small class="text-muted">' + escapeHtml(formatAddress(customer)) + '</small>';
+            html += '</td>';
+            html += '<td>';
+            html += '<div>' + escapeHtml(customer.zone_name || '-') + '</div>';
+            html += '<small class="text-muted">' + escapeHtml(customer.zone_code || '') + '</small>';
+            html += '</td>';
+            html += '<td>';
+            html += '<div>' + escapeHtml(customer.mobile || '-') + '</div>';
+            html += '<small class="text-muted">' + escapeHtml(customer.email || '') + '</small>';
+            html += '</td>';
+            html += '<td>' + escapeHtml(customer.gst_number || '-') + '</td>';
+            html += '<td class="text-end"><strong>' + formatCurrency(customer.current_outstanding) + '</strong></td>';
+            html += '<td>' + statusBadge(customer.status) + '</td>';
+            html += '<td class="text-end">' + actionHtml + '</td>';
+            html += '</tr>';
         });
 
         $('#customerTableBody').html(html);
@@ -129,7 +197,7 @@ $(document).ready(function () {
 
     function loadZones() {
         $.ajax({
-            url: window.BASE_URL + 'api/customers.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
             data: {
@@ -142,7 +210,7 @@ $(document).ready(function () {
 
                     $.each(zones, function (_, zone) {
                         let label = zone.zone_name + (zone.zone_code ? ' - ' + zone.zone_code : '');
-                        filterHtml += `<option value="${zone.id}">${escapeHtml(label)}</option>`;
+                        filterHtml += '<option value="' + zone.id + '">' + escapeHtml(label) + '</option>';
                     });
 
                     $('#zoneFilter').html(filterHtml);
@@ -163,10 +231,23 @@ $(document).ready(function () {
 
     function formatAddress(customer) {
         let parts = [];
-        if (customer.address) parts.push(customer.address);
-        if (customer.city) parts.push(customer.city);
-        if (customer.state) parts.push(customer.state);
-        if (customer.pincode) parts.push(customer.pincode);
+
+        if (customer.address) {
+            parts.push(customer.address);
+        }
+
+        if (customer.city) {
+            parts.push(customer.city);
+        }
+
+        if (customer.state) {
+            parts.push(customer.state);
+        }
+
+        if (customer.pincode) {
+            parts.push(customer.pincode);
+        }
+
         return parts.join(', ');
     }
 
@@ -178,6 +259,7 @@ $(document).ready(function () {
 
     function formatCurrency(value) {
         let numberValue = parseFloat(value || 0);
+
         return '₹' + numberValue.toLocaleString('en-IN', {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2
@@ -187,6 +269,11 @@ $(document).ready(function () {
     function showToastSafe(type, message) {
         if (typeof showToast === 'function') {
             showToast(type, message, 5000);
+            return;
+        }
+
+        if (typeof showAppToast === 'function') {
+            showAppToast(type, message);
             return;
         }
 
@@ -205,4 +292,5 @@ $(document).ready(function () {
     function escapeHtml(value) {
         return $('<div>').text(value === null || value === undefined ? '' : value).html();
     }
+
 });

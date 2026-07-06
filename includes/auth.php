@@ -2,7 +2,11 @@
 require_once __DIR__ . '/config.php';
 
 if (session_status() === PHP_SESSION_NONE) {
-    session_start();
+    if (function_exists('secureSessionStart')) {
+        secureSessionStart();
+    } else {
+        session_start();
+    }
 }
 
 function isLoggedIn()
@@ -29,9 +33,19 @@ function requireApiLogin()
 
 function currentLiveUser()
 {
+    static $loaded = false;
+    static $cachedUser = null;
+
     global $pdo;
 
+    if ($loaded) {
+        return $cachedUser;
+    }
+
+    $loaded = true;
+
     if (!isLoggedIn()) {
+        $cachedUser = null;
         return null;
     }
 
@@ -77,9 +91,11 @@ function currentLiveUser()
             ':user_id' => (int)$_SESSION['user_id']
         ]);
 
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
-        return $user ?: null;
+        $cachedUser = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+        return $cachedUser;
+
     } catch (Exception $e) {
+        $cachedUser = null;
         return null;
     }
 }
@@ -93,119 +109,267 @@ function currentRoleId(){ $u = currentLiveUser(); return (int)($u['role_id'] ?? 
 function currentRoleName(){ $u = currentLiveUser(); return $u['role_name'] ?? ''; }
 function currentBusinessName(){ $u = currentLiveUser(); return $u['business_name'] ?? ''; }
 function currentBranchName(){ $u = currentLiveUser(); return $u['branch_name'] ?? ''; }
+function currentPackageRoleId(){ $u = currentLiveUser(); return (int)($u['parent_role_id'] ?? 0); }
 function isPlatformOwner(){ return currentUserType() === 'platform_owner'; }
 function isBusinessUser(){ return currentUserType() === 'business_user'; }
 
-function hasPermission($menuKey, $action = 'view')
+function parseAccessActions($actions)
 {
+    if ($actions === null || $actions === '') {
+        return [];
+    }
+
+    if (is_array($actions)) {
+        $parts = $actions;
+    } else {
+        $parts = explode(',', (string)$actions);
+    }
+
+    $clean = [];
+
+    foreach ($parts as $part) {
+        $code = (int)trim((string)$part);
+
+        if ($code > 0) {
+            $clean[] = $code;
+        }
+    }
+
+    $clean = array_values(array_unique($clean));
+    sort($clean, SORT_NUMERIC);
+
+    return $clean;
+}
+
+function accessActionsCsv($actions)
+{
+    $actions = parseAccessActions($actions);
+
+    if (empty($actions)) {
+        return '';
+    }
+
+    return implode(',', $actions);
+}
+
+/**
+ * True means this role has its own role_base_access rows.
+ * In that case, do NOT fallback to package for missing menus.
+ *
+ * False means this is normally Branch Admin created from customer registration.
+ * In that case, fallback to package permissions using roles.parent_role_id.
+ */
+function roleHasOwnPermissionRows($roleId)
+{
+    static $cache = [];
+
     global $pdo;
 
-    if (!isLoggedIn()) {
+    $roleId = (int)$roleId;
+
+    if ($roleId <= 0) {
         return false;
     }
 
-    $user = currentLiveUser();
-
-    if (!$user || (int)$user['user_status'] !== 1) {
-        return false;
+    if (isset($cache[$roleId])) {
+        return $cache[$roleId];
     }
-
-    if (($user['user_type'] ?? '') === 'platform_owner') {
-        return true;
-    }
-
-    if ((int)($user['business_status'] ?? 0) !== 1) {
-        return false;
-    }
-
-    if ((int)($user['approval_status'] ?? 0) !== 1) {
-        return false;
-    }
-
-    if ((int)($user['branch_status'] ?? 0) !== 1) {
-        return false;
-    }
-
-    if ((int)($user['role_status'] ?? 0) !== 1) {
-        return false;
-    }
-
-    $roleId = (int)($user['role_id'] ?? 0);
-
-    if ($roleId <= 0 || $menuKey === '' || $action === '') {
-        return false;
-    }
-
-    $columnMap = [
-        'view'             => 'can_view',
-        'add'              => 'can_add',
-        'edit'             => 'can_edit',
-        'delete'           => 'can_delete',
-        'print'            => 'can_print',
-        'export'           => 'can_export',
-        'approve'          => 'can_approve',
-        'convert'          => 'can_convert',
-        'adjust'           => 'can_adjust',
-        'ship'             => 'can_ship',
-        'generate_invoice' => 'can_generate_invoice'
-    ];
-
-    if (!isset($columnMap[$action])) {
-        return false;
-    }
-
-    $column = $columnMap[$action];
 
     try {
         $stmt = $pdo->prepare("
-            SELECT
-                CASE
-                    WHEN rmp_direct.id IS NOT NULL THEN COALESCE(rmp_direct.{$column}, 0)
-                    ELSE COALESCE(rmp_package.{$column}, 0)
-                END AS permission_value
-            FROM roles r
-            INNER JOIN sidebar_menus sm
-                ON sm.menu_key = :menu_key
-                AND sm.status = 1
-            LEFT JOIN role_menu_permissions rmp_direct
-                ON rmp_direct.role_id = r.id
-                AND rmp_direct.menu_id = sm.id
-                AND rmp_direct.status = 1
-            LEFT JOIN role_menu_permissions rmp_package
-                ON rmp_package.role_id = r.parent_role_id
-                AND rmp_package.menu_id = sm.id
-                AND rmp_package.status = 1
-            WHERE r.id = :role_id
-            AND r.status = 1
-            LIMIT 1
+            SELECT COUNT(*) AS total
+            FROM role_base_access
+            WHERE role_id = :role_id
         ");
 
         $stmt->execute([
-            ':role_id'  => $roleId,
-            ':menu_key' => $menuKey
+            ':role_id' => $roleId
         ]);
 
-        $permission = $stmt->fetch(PDO::FETCH_ASSOC);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        $cache[$roleId] = ((int)($row['total'] ?? 0)) > 0;
 
-        return $permission && (int)$permission['permission_value'] === 1;
+        return $cache[$roleId];
+
     } catch (Exception $e) {
+        $cache[$roleId] = false;
         return false;
     }
 }
 
-function requirePermission($menuKey, $action = 'view')
+/**
+ * Final access rule:
+ *
+ * Platform Owner:
+ * - Full access.
+ *
+ * Business role with own permission rows:
+ * - Use own role_base_access only.
+ * - If status = 2 or row missing, deny.
+ * - No fallback to package.
+ *
+ * Business role with no own permission rows:
+ * - Use parent package permission.
+ * - This is used for Branch Admin created during customer registration.
+ */
+function getPageAccess($menuKey)
 {
-    if (!hasPermission($menuKey, $action)) {
+    static $accessCache = [];
+
+    global $pdo;
+
+    $menuKey = trim((string)$menuKey);
+
+    if ($menuKey === '' || !isLoggedIn()) {
+        return [];
+    }
+
+    $cacheKey = currentUserId() . ':' . $menuKey;
+
+    if (isset($accessCache[$cacheKey])) {
+        return $accessCache[$cacheKey];
+    }
+
+    $user = currentLiveUser();
+
+    if (!$user || (int)($user['user_status'] ?? 0) !== 1) {
+        $accessCache[$cacheKey] = [];
+        return [];
+    }
+
+    if (($user['user_type'] ?? '') === 'platform_owner') {
+        $accessCache[$cacheKey] = range(1, 100);
+        return $accessCache[$cacheKey];
+    }
+
+    if ((int)($user['business_status'] ?? 0) !== 1 ||
+        (int)($user['approval_status'] ?? 0) !== 1 ||
+        (int)($user['branch_status'] ?? 0) !== 1 ||
+        (int)($user['role_status'] ?? 0) !== 1) {
+        $accessCache[$cacheKey] = [];
+        return [];
+    }
+
+    $roleId = (int)($user['role_id'] ?? 0);
+    $packageRoleId = (int)($user['parent_role_id'] ?? 0);
+
+    if ($roleId <= 0) {
+        $accessCache[$cacheKey] = [];
+        return [];
+    }
+
+    try {
+        if (roleHasOwnPermissionRows($roleId)) {
+            $stmt = $pdo->prepare("
+                SELECT
+                    rba.access_actions,
+                    rba.status
+                FROM sidebar_menus sm
+                LEFT JOIN role_base_access rba
+                    ON rba.menu_id = sm.id
+                    AND rba.role_id = :role_id
+                WHERE sm.menu_key = :menu_key
+                AND sm.status = 1
+                LIMIT 1
+            ");
+
+            $stmt->execute([
+                ':role_id' => $roleId,
+                ':menu_key' => $menuKey
+            ]);
+
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$row || (int)($row['status'] ?? 0) !== 1) {
+                $accessCache[$cacheKey] = [];
+                return [];
+            }
+
+            $accessCache[$cacheKey] = parseAccessActions($row['access_actions'] ?? '');
+            return $accessCache[$cacheKey];
+        }
+
+        if ($packageRoleId <= 0) {
+            $accessCache[$cacheKey] = [];
+            return [];
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT
+                package_access.access_actions
+            FROM sidebar_menus sm
+            INNER JOIN role_base_access package_access
+                ON package_access.menu_id = sm.id
+                AND package_access.role_id = :package_role_id
+                AND package_access.status = 1
+            WHERE sm.menu_key = :menu_key
+            AND sm.status = 1
+            LIMIT 1
+        ");
+
+        $stmt->execute([
+            ':package_role_id' => $packageRoleId,
+            ':menu_key' => $menuKey
+        ]);
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        $accessCache[$cacheKey] = parseAccessActions($row['access_actions'] ?? '');
+        return $accessCache[$cacheKey];
+
+    } catch (Exception $e) {
+        $accessCache[$cacheKey] = [];
+        return [];
+    }
+}
+
+function canAccess($pageAccess, $actionCode)
+{
+    if (!is_array($pageAccess)) {
+        return false;
+    }
+
+    $actionCode = (int)$actionCode;
+
+    if ($actionCode <= 0) {
+        return false;
+    }
+
+    return in_array($actionCode, $pageAccess, true);
+}
+
+function hasPermission($menuKey, $actionCode = 1)
+{
+    $pageAccess = getPageAccess($menuKey);
+    return canAccess($pageAccess, (int)$actionCode);
+}
+
+function requirePageAccess($pageAccess, $actionCode = 1)
+{
+    if (!canAccess($pageAccess, (int)$actionCode)) {
         header('Location: ' . BASE_URL . 'pages/dashboard.php');
         exit;
     }
 }
 
-function requireApiPermission($menuKey, $action = 'view')
+function requirePermission($menuKey, $actionCode = 1)
 {
-    if (!hasPermission($menuKey, $action)) {
+    if (!hasPermission($menuKey, (int)$actionCode)) {
+        header('Location: ' . BASE_URL . 'pages/dashboard.php');
+        exit;
+    }
+}
+
+function requireApiPageAccess($menuKey, $actionCode = 1)
+{
+    if (!hasPermission($menuKey, (int)$actionCode)) {
         jsonResponse(false, 'Permission denied.');
     }
+}
+
+function requireApiPermission($menuKey, $actionCode = 1)
+{
+    requireApiPageAccess($menuKey, (int)$actionCode);
 }
 
 function businessWhereClause($tableAlias = '')
@@ -228,7 +392,16 @@ function logout()
 
     if (ini_get('session.use_cookies')) {
         $params = session_get_cookie_params();
-        setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
+
+        setcookie(
+            session_name(),
+            '',
+            time() - 42000,
+            $params['path'],
+            $params['domain'],
+            $params['secure'],
+            $params['httponly']
+        );
     }
 
     session_destroy();

@@ -1,28 +1,70 @@
 $(document).ready(function () {
     $('#preloader').fadeOut('slow');
 
+    let pageContext = {
+        can_view: false,
+        can_edit: false,
+        can_refresh: false,
+        can_business_edit: false,
+        can_branch_edit: false,
+        can_general_edit: false
+    };
+
     loadSettings();
 
-    $('#refreshSettingsBtn').on('click', loadSettings);
+    $('#refreshSettingsBtn').on('click', function () {
+        if (!pageContext.can_refresh && !pageContext.can_view && !pageContext.can_edit) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
+        loadSettings();
+    });
 
     $('#saveBusinessProfileBtn').on('click', function () {
+        if (!pageContext.can_business_edit) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         saveBusinessProfile(this);
     });
 
     $('#saveBranchProfileBtn').on('click', function () {
+        if (!pageContext.can_branch_edit) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         saveBranchProfile(this);
     });
 
     $('#saveGeneralSettingsBtn').on('click', function () {
+        if (!pageContext.can_general_edit) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         saveGeneralSettings(this);
     });
 
     $('#business_logo').on('change', function () {
+        if (!pageContext.can_business_edit) {
+            showToastSafe('error', 'Permission denied.');
+            $('#business_logo').val('');
+            return;
+        }
+
         $('#remove_logo').val('0');
         previewSelectedLogo(this);
     });
 
     $('#removeLogoBtn').on('click', function () {
+        if (!pageContext.can_business_edit) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         $('#remove_logo').val('1');
         $('#business_logo').val('');
         renderLogoPreview('');
@@ -36,19 +78,62 @@ $(document).ready(function () {
             data: { action: 'get_settings' },
             success: function (response) {
                 if (response.status === true) {
+                    pageContext = response.data.context || pageContext;
+
                     renderBusiness(response.data.business || {});
                     renderBranch(response.data.branch || {});
                     renderGeneralSettings(response.data.settings || {});
                     renderStats(response.data.stats || {});
+                    applyPermissionContext();
                 } else {
                     handleError(response);
+                    disableSettingsPage();
                 }
             },
             error: function (xhr) {
                 console.log(xhr.responseText);
                 showToastSafe('error', 'Server error while loading settings.');
+                disableSettingsPage();
             }
         });
+    }
+
+    function applyPermissionContext() {
+        if (pageContext.can_refresh || pageContext.can_view || pageContext.can_edit) {
+            $('#refreshSettingsBtn').removeClass('d-none').prop('disabled', false);
+        } else {
+            $('#refreshSettingsBtn').addClass('d-none').prop('disabled', true);
+        }
+
+        applyFormMode('#businessProfileForm', '#saveBusinessProfileBtn', pageContext.can_business_edit);
+        applyFormMode('#branchProfileForm', '#saveBranchProfileBtn', pageContext.can_branch_edit);
+        applyFormMode('#generalSettingsForm', '#saveGeneralSettingsBtn', pageContext.can_general_edit);
+
+        if (pageContext.can_business_edit) {
+            $('#removeLogoBtn').removeClass('d-none').prop('disabled', false);
+            $('#business_logo').prop('disabled', false);
+        } else {
+            $('#removeLogoBtn').addClass('d-none').prop('disabled', true);
+            $('#business_logo').prop('disabled', true);
+        }
+    }
+
+    function applyFormMode(formSelector, saveButtonSelector, canEdit) {
+        let $form = $(formSelector);
+
+        if (canEdit) {
+            $form.find('input, select, textarea').not('[readonly]').prop('disabled', false);
+            $(saveButtonSelector).removeClass('d-none').prop('disabled', false);
+            return;
+        }
+
+        $form.find('input, select, textarea').not('[readonly]').prop('disabled', true);
+        $(saveButtonSelector).addClass('d-none').prop('disabled', true);
+    }
+
+    function disableSettingsPage() {
+        $('input, select, textarea, button').prop('disabled', true);
+        $('#saveBusinessProfileBtn, #saveBranchProfileBtn, #saveGeneralSettingsBtn').addClass('d-none');
     }
 
     function saveBusinessProfile(button) {
@@ -243,7 +328,6 @@ $(document).ready(function () {
             : '<span class="badge bg-danger">Inactive</span>';
     }
 
-
     function setButtonLoading(button, loading) {
         let $btn = $(button);
 
@@ -254,6 +338,7 @@ $(document).ready(function () {
         }
 
         $btn.prop('disabled', false).html($btn.data('original-html'));
+        applyPermissionContext();
     }
 
     function showToastSafe(type, message) {

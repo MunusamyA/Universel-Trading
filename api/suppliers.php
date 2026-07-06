@@ -8,11 +8,16 @@ require_once BASE_PATH . 'includes/auth.php';
 
 secureSessionStart();
 header('Content-Type: application/json');
+
 requireApiLogin();
 
 $action = cleanInput($_POST['action'] ?? $_GET['action'] ?? '');
 
 switch ($action) {
+    case 'get_page_context':
+        getPageContext($pdo);
+        break;
+
     case 'list_suppliers':
         listSuppliers($pdo);
         break;
@@ -36,24 +41,57 @@ switch ($action) {
         break;
 }
 
-function requireSupplierPermission($action = 'can_view')
+/*
+|--------------------------------------------------------------------------
+| Supplier permission action numbers
+|--------------------------------------------------------------------------
+| 1  = View
+| 2  = List
+| 3  = Create / Add
+| 4  = Edit
+| 5  = Delete
+| 17 = Supplier Payment
+|--------------------------------------------------------------------------
+*/
+
+function supplierCan($actionCode)
 {
     if (isPlatformOwner()) {
-        return;
+        return true;
     }
 
-    $permissionMap = [
-        'can_view' => 'view',
-        'can_add' => 'add',
-        'can_edit' => 'edit',
-        'can_delete' => 'delete'
-    ];
+    return function_exists('hasPermission') && hasPermission('suppliers', (int)$actionCode);
+}
 
-    $permissionAction = $permissionMap[$action] ?? 'view';
-
-    if (function_exists('hasPermission') && !hasPermission('suppliers', $permissionAction)) {
+function requireSupplierPermission($actionCode)
+{
+    if (!supplierCan((int)$actionCode)) {
         jsonResponse(false, 'Permission denied.');
     }
+}
+
+function getPageContext(PDO $pdo)
+{
+    if (!supplierCan(1) && !supplierCan(2)) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
+    jsonResponse(true, 'Page context loaded.', [
+        'context' => [
+            'can_view' => supplierCan(1),
+            'can_list' => supplierCan(2),
+            'can_add' => supplierCan(3),
+            'can_edit' => supplierCan(4),
+            'can_delete' => supplierCan(5),
+            'can_supplier_payment' => supplierCan(17),
+            'page_title' => 'Suppliers',
+            'page_note' => 'Manage supplier master data based on your role permission.',
+            'add_button_label' => 'Add Supplier',
+            'add_modal_title' => 'Add Supplier',
+            'edit_modal_title' => 'Edit Supplier',
+            'supplier_payment_url' => BASE_URL . 'pages/supplier-payments.php'
+        ]
+    ]);
 }
 
 function getScope()
@@ -73,7 +111,9 @@ function getScope()
 
 function listSuppliers(PDO $pdo)
 {
-    requireSupplierPermission('can_view');
+    if (!supplierCan(1) && !supplierCan(2)) {
+        jsonResponse(false, 'Permission denied.');
+    }
 
     $scope = getScope();
     $search = cleanInput($_GET['search'] ?? '');
@@ -95,81 +135,114 @@ function listSuppliers(PDO $pdo)
     }
 
     if ($search !== '') {
+        /*
+        |--------------------------------------------------------------------------
+        | Unique PDO placeholders avoid SQLSTATE[HY093].
+        |--------------------------------------------------------------------------
+        */
+
         $where .= "
             AND (
-                supplier_name LIKE :search
-                OR mobile LIKE :search
-                OR email LIKE :search
-                OR gst_number LIKE :search
-                OR pan_number LIKE :search
-                OR dl_number LIKE :search
-                OR fl_number LIKE :search
-                OR bank_name LIKE :search
-                OR bank_account_no LIKE :search
+                supplier_name LIKE :search_supplier_name
+                OR mobile LIKE :search_mobile
+                OR email LIKE :search_email
+                OR gst_number LIKE :search_gst_number
+                OR pan_number LIKE :search_pan_number
+                OR dl_number LIKE :search_dl_number
+                OR fl_number LIKE :search_fl_number
+                OR bank_name LIKE :search_bank_name
+                OR bank_account_no LIKE :search_bank_account_no
             )
         ";
-        $params[':search'] = '%' . $search . '%';
+
+        $searchValue = '%' . $search . '%';
+
+        $params[':search_supplier_name'] = $searchValue;
+        $params[':search_mobile'] = $searchValue;
+        $params[':search_email'] = $searchValue;
+        $params[':search_gst_number'] = $searchValue;
+        $params[':search_pan_number'] = $searchValue;
+        $params[':search_dl_number'] = $searchValue;
+        $params[':search_fl_number'] = $searchValue;
+        $params[':search_bank_name'] = $searchValue;
+        $params[':search_bank_account_no'] = $searchValue;
     }
 
-    $stmt = $pdo->prepare("
-        SELECT
-            id,
-            supplier_name,
-            mobile,
-            email,
-            gst_number,
-            pan_number,
-            dl_number,
-            fl_number,
-            address,
-            city,
-            state,
-            pincode,
-            opening_outstanding,
-            current_outstanding,
-            bank_name,
-            bank_account_no,
-            bank_branch,
-            bank_ifsc,
-            upi_id,
-            status,
-            created_at,
-            updated_at
-        FROM suppliers
-        $where
-        ORDER BY id DESC
-    ");
+    try {
+        $stmt = $pdo->prepare("
+            SELECT
+                id,
+                supplier_name,
+                mobile,
+                email,
+                gst_number,
+                pan_number,
+                dl_number,
+                fl_number,
+                address,
+                city,
+                state,
+                pincode,
+                opening_outstanding,
+                current_outstanding,
+                bank_name,
+                bank_account_no,
+                bank_branch,
+                bank_ifsc,
+                upi_id,
+                status,
+                created_at,
+                updated_at
+            FROM suppliers
+            $where
+            ORDER BY id DESC
+        ");
 
-    $stmt->execute($params);
-    $suppliers = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $stmt->execute($params);
+        $suppliers = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $statsStmt = $pdo->prepare("
-        SELECT
-            COUNT(*) AS total_suppliers,
-            SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS active_suppliers,
-            SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END) AS inactive_suppliers,
-            COALESCE(SUM(current_outstanding), 0) AS total_outstanding
-        FROM suppliers
-        WHERE business_id = :business_id
-        AND branch_id = :branch_id
-    ");
+        $canEdit = supplierCan(4);
+        $canDelete = supplierCan(5);
+        $canSupplierPayment = supplierCan(17);
 
-    $statsStmt->execute([
-        ':business_id' => $scope['business_id'],
-        ':branch_id' => $scope['branch_id']
-    ]);
+        foreach ($suppliers as &$supplier) {
+            $supplier['can_edit'] = $canEdit;
+            $supplier['can_delete'] = $canDelete;
+            $supplier['can_supplier_payment'] = $canSupplierPayment;
+        }
+        unset($supplier);
 
-    $stats = $statsStmt->fetch(PDO::FETCH_ASSOC);
+        $statsStmt = $pdo->prepare("
+            SELECT
+                COUNT(*) AS total_suppliers,
+                SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS active_suppliers,
+                SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END) AS inactive_suppliers,
+                COALESCE(SUM(current_outstanding), 0) AS total_outstanding
+            FROM suppliers
+            WHERE business_id = :business_id
+            AND branch_id = :branch_id
+        ");
 
-    jsonResponse(true, 'Suppliers loaded.', [
-        'suppliers' => $suppliers,
-        'stats' => $stats ?: []
-    ]);
+        $statsStmt->execute([
+            ':business_id' => $scope['business_id'],
+            ':branch_id' => $scope['branch_id']
+        ]);
+
+        $stats = $statsStmt->fetch(PDO::FETCH_ASSOC);
+
+        jsonResponse(true, 'Suppliers loaded.', [
+            'suppliers' => $suppliers,
+            'stats' => $stats ?: []
+        ]);
+
+    } catch (Exception $e) {
+        jsonResponse(false, $e->getMessage() ?: 'Unable to load suppliers.');
+    }
 }
 
 function getSupplier(PDO $pdo)
 {
-    requireSupplierPermission('can_view');
+    requireSupplierPermission(4);
 
     $scope = getScope();
     $supplierId = (int)($_GET['supplier_id'] ?? 0);
@@ -178,50 +251,55 @@ function getSupplier(PDO $pdo)
         jsonResponse(false, 'Invalid supplier.');
     }
 
-    $stmt = $pdo->prepare("
-        SELECT
-            id,
-            supplier_name,
-            mobile,
-            email,
-            gst_number,
-            pan_number,
-            dl_number,
-            fl_number,
-            address,
-            city,
-            state,
-            pincode,
-            opening_outstanding,
-            current_outstanding,
-            bank_name,
-            bank_account_no,
-            bank_branch,
-            bank_ifsc,
-            upi_id,
-            status
-        FROM suppliers
-        WHERE id = :supplier_id
-        AND business_id = :business_id
-        AND branch_id = :branch_id
-        LIMIT 1
-    ");
+    try {
+        $stmt = $pdo->prepare("
+            SELECT
+                id,
+                supplier_name,
+                mobile,
+                email,
+                gst_number,
+                pan_number,
+                dl_number,
+                fl_number,
+                address,
+                city,
+                state,
+                pincode,
+                opening_outstanding,
+                current_outstanding,
+                bank_name,
+                bank_account_no,
+                bank_branch,
+                bank_ifsc,
+                upi_id,
+                status
+            FROM suppliers
+            WHERE id = :supplier_id
+            AND business_id = :business_id
+            AND branch_id = :branch_id
+            LIMIT 1
+        ");
 
-    $stmt->execute([
-        ':supplier_id' => $supplierId,
-        ':business_id' => $scope['business_id'],
-        ':branch_id' => $scope['branch_id']
-    ]);
+        $stmt->execute([
+            ':supplier_id' => $supplierId,
+            ':business_id' => $scope['business_id'],
+            ':branch_id' => $scope['branch_id']
+        ]);
 
-    $supplier = $stmt->fetch(PDO::FETCH_ASSOC);
+        $supplier = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    if (!$supplier) {
-        jsonResponse(false, 'Supplier not found.');
+        if (!$supplier) {
+            jsonResponse(false, 'Supplier not found.');
+        }
+
+        jsonResponse(true, 'Supplier loaded.', [
+            'supplier' => $supplier
+        ]);
+
+    } catch (Exception $e) {
+        jsonResponse(false, $e->getMessage() ?: 'Unable to load supplier.');
     }
-
-    jsonResponse(true, 'Supplier loaded.', [
-        'supplier' => $supplier
-    ]);
 }
 
 function saveSupplier(PDO $pdo)
@@ -230,9 +308,9 @@ function saveSupplier(PDO $pdo)
     $supplierId = (int)($_POST['supplier_id'] ?? 0);
 
     if ($supplierId > 0) {
-        requireSupplierPermission('can_edit');
+        requireSupplierPermission(4);
     } else {
-        requireSupplierPermission('can_add');
+        requireSupplierPermission(3);
     }
 
     $supplierName = cleanInput($_POST['supplier_name'] ?? '');
@@ -286,6 +364,8 @@ function saveSupplier(PDO $pdo)
     }
 
     try {
+        checkDuplicateSupplier($pdo, $scope, $mobile, $gstNumber, $panNumber, $supplierId);
+
         if ($supplierId > 0) {
             $oldStmt = $pdo->prepare("
                 SELECT opening_outstanding, current_outstanding
@@ -320,7 +400,8 @@ function saveSupplier(PDO $pdo)
 
             $stmt = $pdo->prepare("
                 UPDATE suppliers
-                SET supplier_name = :supplier_name,
+                SET
+                    supplier_name = :supplier_name,
                     mobile = :mobile,
                     email = :email,
                     gst_number = :gst_number,
@@ -463,7 +544,7 @@ function saveSupplier(PDO $pdo)
 
 function deleteSupplier(PDO $pdo)
 {
-    requireSupplierPermission('can_delete');
+    requireSupplierPermission(5);
 
     $scope = getScope();
     $supplierId = (int)($_POST['supplier_id'] ?? 0);
@@ -472,38 +553,109 @@ function deleteSupplier(PDO $pdo)
         jsonResponse(false, 'Invalid supplier.');
     }
 
-    $usedStmt = $pdo->prepare("
-        SELECT COUNT(*) AS total_used
-        FROM purchases
-        WHERE supplier_id = :supplier_id
-        AND business_id = :business_id
-        AND branch_id = :branch_id
-    ");
+    try {
+        $usedStmt = $pdo->prepare("
+            SELECT COUNT(*) AS total_used
+            FROM purchases
+            WHERE supplier_id = :supplier_id
+            AND business_id = :business_id
+            AND branch_id = :branch_id
+        ");
 
-    $usedStmt->execute([
-        ':supplier_id' => $supplierId,
+        $usedStmt->execute([
+            ':supplier_id' => $supplierId,
+            ':business_id' => $scope['business_id'],
+            ':branch_id' => $scope['branch_id']
+        ]);
+
+        $used = $usedStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ((int)($used['total_used'] ?? 0) > 0) {
+            jsonResponse(false, 'Supplier already used in purchase. You can make it inactive instead.');
+        }
+
+        $stmt = $pdo->prepare("
+            DELETE FROM suppliers
+            WHERE id = :supplier_id
+            AND business_id = :business_id
+            AND branch_id = :branch_id
+        ");
+
+        $stmt->execute([
+            ':supplier_id' => $supplierId,
+            ':business_id' => $scope['business_id'],
+            ':branch_id' => $scope['branch_id']
+        ]);
+
+        jsonResponse(true, 'Supplier deleted successfully.');
+
+    } catch (Exception $e) {
+        jsonResponse(false, $e->getMessage() ?: 'Supplier delete failed.');
+    }
+}
+
+function checkDuplicateSupplier(PDO $pdo, array $scope, $mobile, $gstNumber, $panNumber, $ignoreSupplierId = 0)
+{
+    if ($mobile === '' && $gstNumber === '' && $panNumber === '') {
+        return;
+    }
+
+    $params = [
         ':business_id' => $scope['business_id'],
         ':branch_id' => $scope['branch_id']
-    ]);
+    ];
 
-    $used = $usedStmt->fetch(PDO::FETCH_ASSOC);
+    $conditions = [];
 
-    if ((int)($used['total_used'] ?? 0) > 0) {
-        jsonResponse(false, 'Supplier already used in purchase. You can make it inactive instead.');
+    if ($mobile !== '') {
+        $conditions[] = "mobile = :mobile";
+        $params[':mobile'] = $mobile;
+    }
+
+    if ($gstNumber !== '') {
+        $conditions[] = "gst_number = :gst_number";
+        $params[':gst_number'] = $gstNumber;
+    }
+
+    if ($panNumber !== '') {
+        $conditions[] = "pan_number = :pan_number";
+        $params[':pan_number'] = $panNumber;
+    }
+
+    if (empty($conditions)) {
+        return;
+    }
+
+    $where = "
+        WHERE business_id = :business_id
+        AND branch_id = :branch_id
+        AND (" . implode(' OR ', $conditions) . ")
+    ";
+
+    if ((int)$ignoreSupplierId > 0) {
+        $where .= " AND id != :ignore_supplier_id ";
+        $params[':ignore_supplier_id'] = (int)$ignoreSupplierId;
     }
 
     $stmt = $pdo->prepare("
-        DELETE FROM suppliers
-        WHERE id = :supplier_id
-        AND business_id = :business_id
-        AND branch_id = :branch_id
+        SELECT id, mobile, gst_number, pan_number
+        FROM suppliers
+        $where
+        LIMIT 1
     ");
 
-    $stmt->execute([
-        ':supplier_id' => $supplierId,
-        ':business_id' => $scope['business_id'],
-        ':branch_id' => $scope['branch_id']
-    ]);
+    $stmt->execute($params);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    jsonResponse(true, 'Supplier deleted successfully.');
+    if ($row) {
+        if ($mobile !== '' && (string)$row['mobile'] === (string)$mobile) {
+            jsonResponse(false, 'Mobile number already exists.');
+        }
+
+        if ($gstNumber !== '' && (string)$row['gst_number'] === (string)$gstNumber) {
+            jsonResponse(false, 'GST number already exists.');
+        }
+
+        jsonResponse(false, 'PAN number already exists.');
+    }
 }

@@ -13,6 +13,9 @@ requireApiLogin();
 $action = cleanInput($_POST['action'] ?? $_GET['action'] ?? '');
 
 switch ($action) {
+    case 'get_page_context':
+        getPageContext($pdo);
+        break;
     case 'get_suppliers':
         spGetSuppliers($pdo);
         break;
@@ -47,6 +50,61 @@ switch ($action) {
         jsonResponse(false, 'Invalid action.');
 }
 
+function spPermissionKeys()
+{
+    return [
+        'supplier_payments',
+        'supplier_payment',
+        'suppliers',
+        'purchases'
+    ];
+}
+
+function spHasAction($menuKey, $actionCode)
+{
+    if (!function_exists('hasPermission')) {
+        return true;
+    }
+
+    return hasPermission($menuKey, (int)$actionCode);
+}
+
+function spPaymentCan($actionCode)
+{
+    if (function_exists('isPlatformOwner') && isPlatformOwner()) {
+        return true;
+    }
+
+    foreach (spPermissionKeys() as $key) {
+        if (spHasAction($key, (int)$actionCode)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function spLedgerCan($actionCode)
+{
+    if (function_exists('isPlatformOwner') && isPlatformOwner()) {
+        return true;
+    }
+
+    if (!function_exists('hasPermission')) {
+        return true;
+    }
+
+    return hasPermission('supplier_ledger', (int)$actionCode);
+}
+
+function spCanAccessPaymentPage()
+{
+    return spPaymentCan(1)
+        || spPaymentCan(2)
+        || spPaymentCan(3)
+        || spPaymentCan(17);
+}
+
 function spRequirePermission($action = 'view')
 {
     if (function_exists('isPlatformOwner') && isPlatformOwner()) {
@@ -57,13 +115,69 @@ function spRequirePermission($action = 'view')
         return;
     }
 
-    foreach (['supplier_payments', 'supplier_payment', 'purchases', 'suppliers'] as $key) {
-        if (hasPermission($key, $action)) {
+    $action = is_numeric($action) ? (int)$action : (string)$action;
+
+    if ($action === 1 || $action === 'view') {
+        if (spCanAccessPaymentPage()) {
+            return;
+        }
+    }
+
+    if ($action === 2 || $action === 'list') {
+        if (spPaymentCan(2) || spPaymentCan(17)) {
+            return;
+        }
+    }
+
+    if ($action === 3 || $action === 17 || $action === 'add' || $action === 'receive_payment') {
+        if (spPaymentCan(17) || spPaymentCan(3)) {
+            return;
+        }
+    }
+
+    if ($action === 4 || $action === 'edit') {
+        if (spPaymentCan(4)) {
+            return;
+        }
+    }
+
+    if ($action === 18 || $action === 'cancel') {
+        if (spPaymentCan(18)) {
+            return;
+        }
+    }
+
+    if ($action === 5 || $action === 'delete') {
+        if (spPaymentCan(5)) {
             return;
         }
     }
 
     jsonResponse(false, 'Permission denied.');
+}
+
+function getPageContext(PDO $pdo)
+{
+    if (!spCanAccessPaymentPage()) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
+    jsonResponse(true, 'Page context loaded.', [
+        'context' => [
+            'can_view' => spCanAccessPaymentPage(),
+            'can_list' => spPaymentCan(2) || spPaymentCan(17),
+            'can_add' => spPaymentCan(17) || spPaymentCan(3),
+            'can_edit' => spPaymentCan(4),
+            'can_cancel' => spPaymentCan(18),
+            'can_delete' => spPaymentCan(5),
+            'can_ledger' => spLedgerCan(1) || spLedgerCan(2),
+            'can_back' => spPaymentCan(1) || spPaymentCan(2),
+            'page_title' => 'Supplier Payments',
+            'page_note' => 'Supplier payment entry and history',
+            'ledger_url' => BASE_URL . 'pages/supplier-ledger.php',
+            'back_url' => BASE_URL . 'pages/purchases.php'
+        ]
+    ]);
 }
 
 function spScope()
@@ -262,14 +376,27 @@ function spListPayments(PDO $pdo)
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
 
+    $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $canEdit = spPaymentCan(4);
+    $canCancel = spPaymentCan(18);
+    $canDelete = spPaymentCan(5);
+
+    foreach ($payments as &$payment) {
+        $payment['can_edit'] = $canEdit;
+        $payment['can_cancel'] = $canCancel;
+        $payment['can_delete'] = $canDelete;
+    }
+    unset($payment);
+
     jsonResponse(true, 'Payments loaded.', [
-        'payments' => $stmt->fetchAll(PDO::FETCH_ASSOC)
+        'payments' => $payments
     ]);
 }
 
 function spGetPayment(PDO $pdo)
 {
-    spRequirePermission('view');
+    spRequirePermission('edit');
     $scope = spScope();
     $paymentId = (int)($_GET['payment_id'] ?? 0);
 
@@ -483,7 +610,7 @@ function spSavePayment(PDO $pdo)
 function spCancelPayment(PDO $pdo)
 {
     $scope = spScope();
-    spRequirePermission('edit');
+    spRequirePermission('cancel');
 
     $paymentId = (int)($_POST['payment_id'] ?? 0);
     if ($paymentId <= 0) {

@@ -5,26 +5,36 @@ $(document).ready(function () {
     let expenseId = parseInt(config.expense_id || $('#expense_id').val() || 0);
     let categoryModal = new bootstrap.Modal(document.getElementById('categoryModal'));
     let paymentModes = [];
+    let pageContext = {
+        can_view: false,
+        can_list: false,
+        can_add: false,
+        can_edit: false,
+        can_delete: false,
+        can_cancel: false,
+        can_quick_add_category: false
+    };
+    let readOnlyMode = false;
 
-    $('#expense_date').val(currentDate());
-
-    loadCategories();
-    loadPaymentModes(function () {
-        if (expenseId > 0) {
-            loadExpense(expenseId);
-        } else {
-            addSplitRow('', '', '');
-            recalculateTotals();
-        }
-    });
+    loadPageContext();
 
     $('.amount-field').on('input', recalculateTotals);
 
     $('#addSplitRowBtn').on('click', function () {
+        if (readOnlyMode) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         addSplitRow('', '', '');
     });
 
     $(document).on('click', '.remove-split-row', function () {
+        if (readOnlyMode) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         $(this).closest('tr').remove();
         if ($('#splitRowsBody tr').length === 0) {
             addSplitRow('', '', '');
@@ -37,12 +47,22 @@ $(document).ready(function () {
     });
 
     $('#quickAddCategoryBtn').on('click', function () {
+        if (!pageContext.can_quick_add_category) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         $('#categoryForm')[0].reset();
         categoryModal.show();
     });
 
     $('#categoryForm').on('submit', function (e) {
         e.preventDefault();
+
+        if (!pageContext.can_quick_add_category) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
 
         if ($.trim($('#quick_category_name').val()) === '') {
             showToastSafe('warning', 'Please enter category name.');
@@ -72,6 +92,16 @@ $(document).ready(function () {
 
     $('#expenseForm').on('submit', function (e) {
         e.preventDefault();
+
+        if (expenseId > 0 && !pageContext.can_edit) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
+        if (expenseId <= 0 && !pageContext.can_add) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
 
         if ($('#expense_date').val() === '') {
             showToastSafe('warning', 'Please select expense date.');
@@ -132,6 +162,77 @@ $(document).ready(function () {
         });
     });
 
+    function loadPageContext() {
+        $.ajax({
+            url: window.BASE_URL + 'api/expenses.php',
+            type: 'GET',
+            dataType: 'json',
+            data: {
+                action: 'get_page_context'
+            },
+            success: function (response) {
+                if (response.status === true) {
+                    pageContext = response.data.context || pageContext;
+                    applyPageContext();
+
+                    $('#expense_date').val(currentDate());
+
+                    loadCategories();
+                    loadPaymentModes(function () {
+                        if (expenseId > 0) {
+                            loadExpense(expenseId);
+                        } else {
+                            addSplitRow('', '', '');
+                            recalculateTotals();
+                        }
+                    });
+                } else {
+                    handleError(response);
+                    disableWholeForm();
+                }
+            },
+            error: function (xhr) {
+                console.log(xhr.responseText);
+                showToastSafe('error', 'Server error.');
+                disableWholeForm();
+            }
+        });
+    }
+
+    function applyPageContext() {
+        if (expenseId > 0) {
+            readOnlyMode = !pageContext.can_edit;
+
+            if (!pageContext.can_edit) {
+                $('#saveExpenseBtn').addClass('d-none');
+            }
+        } else {
+            readOnlyMode = !pageContext.can_add;
+
+            if (!pageContext.can_add) {
+                $('#saveExpenseBtn').addClass('d-none');
+                disableWholeForm();
+            }
+        }
+
+        if (pageContext.can_quick_add_category) {
+            $('#quickAddCategoryBtn').removeClass('d-none');
+        } else {
+            $('#quickAddCategoryBtn').addClass('d-none');
+        }
+
+        if (readOnlyMode) {
+            $('#expenseForm').find('input, select, textarea').not('#expense_id').prop('disabled', true);
+            $('#addSplitRowBtn').prop('disabled', true);
+        }
+    }
+
+    function disableWholeForm() {
+        $('#expenseForm').find('input, select, textarea, button').prop('disabled', true);
+        $('#saveExpenseBtn').addClass('d-none');
+        $('#quickAddCategoryBtn').addClass('d-none');
+    }
+
     function loadExpense(expenseId) {
         $.ajax({
             url: window.BASE_URL + 'api/expenses.php',
@@ -144,7 +245,7 @@ $(document).ready(function () {
             success: function (response) {
                 if (response.status === true) {
                     let expense = response.data.expense || {};
-                    $('#expensePageTitle').text('Edit Expense');
+                    $('#expensePageTitle').text(pageContext.can_edit ? 'Edit Expense' : 'View Expense');
                     $('#expense_id').val(expense.id || '');
                     $('#expense_date').val(expense.expense_date || currentDate());
                     $('#vendor_name').val(expense.vendor_name || '');
@@ -152,7 +253,7 @@ $(document).ready(function () {
                     $('#taxable_amount').val(numPlain(expense.taxable_amount || 0));
                     $('#gst_amount').val(numPlain(expense.gst_amount || 0));
                     $('#notes').val(expense.notes || '');
-                    $('#status').val(expense.status || 1);
+                    $('#status1').val(expense.status || 1);
                     loadCategories(expense.category_id || '');
 
                     $('#splitRowsBody').html('');
@@ -167,6 +268,12 @@ $(document).ready(function () {
 
                     recalculateTotals();
                     recalculateSplitTotal();
+
+                    if (readOnlyMode) {
+                        $('#expenseForm').find('input, select, textarea').not('#expense_id').prop('disabled', true);
+                        $('#addSplitRowBtn').prop('disabled', true);
+                        $('.remove-split-row').prop('disabled', true);
+                    }
                 } else {
                     handleError(response);
                 }
@@ -192,6 +299,10 @@ $(document).ready(function () {
                         html += `<option value="${category.id}" ${selected}>${escapeHtml(category.category_name)}</option>`;
                     });
                     $('#category_id').html(html);
+
+                    if (readOnlyMode) {
+                        $('#category_id').prop('disabled', true);
+                    }
                 }
             }
         });
@@ -223,12 +334,14 @@ $(document).ready(function () {
             modeHtml += `<option value="${mode.id}" ${selected}>${escapeHtml(mode.mode_name)}</option>`;
         });
 
+        let disabledAttr = readOnlyMode ? 'disabled' : '';
+
         let html = `
             <tr>
-                <td><select class="form-select split-mode">${modeHtml}</select></td>
-                <td><input type="number" step="0.01" min="0" class="form-control split-amount" value="${amount !== '' ? numPlain(amount) : ''}"></td>
-                <td><input type="text" class="form-control split-reference" value="${escapeHtml(referenceNo || '')}" placeholder="Reference"></td>
-                <td><button type="button" class="btn btn-sm btn-outline-danger remove-split-row"><i class="mdi mdi-delete"></i></button></td>
+                <td><select class="form-select split-mode" ${disabledAttr}>${modeHtml}</select></td>
+                <td><input type="number" step="0.01" min="0" class="form-control split-amount" value="${amount !== '' ? numPlain(amount) : ''}" ${disabledAttr}></td>
+                <td><input type="text" class="form-control split-reference" value="${escapeHtml(referenceNo || '')}" placeholder="Reference" ${disabledAttr}></td>
+                <td><button type="button" class="btn btn-sm btn-outline-danger remove-split-row" ${disabledAttr}><i class="mdi mdi-delete"></i></button></td>
             </tr>
         `;
         $('#splitRowsBody').append(html);

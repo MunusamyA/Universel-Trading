@@ -45,7 +45,7 @@ $today = date('Y-m-d');
                     <div class="col-12">
                         <div class="page-title-box d-flex align-items-center justify-content-between">
                             <h4 class="mb-0">Daily Ledger Report</h4>
-                            <button class="btn btn-outline-primary" type="button" onclick="window.print()">
+                            <button class="btn btn-outline-primary" type="button" id="printReportBtn" onclick="window.print()">
                                 <i class="mdi mdi-printer me-1"></i> Print
                             </button>
                         </div>

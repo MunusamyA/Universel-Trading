@@ -13,6 +13,18 @@ requireApiLogin();
 $action = cleanInput($_POST['action'] ?? $_GET['action'] ?? '');
 
 switch ($action) {
+    case 'sales_permission_debug':
+        salesPermissionDebug($pdo);
+        break;
+
+    case 'get_page_context':
+        getPageContext($pdo);
+        break;
+
+    case 'customer_payments_page_context':
+        customerPaymentsPageContext($pdo);
+        break;
+
     case 'get_document_permissions':
         getSalesDocumentPermissions($pdo);
         break;
@@ -94,33 +106,399 @@ function currentUserIdSafe()
     return (int)($_SESSION['user_id'] ?? 0);
 }
 
-function requireSalesPermission($action = 'view')
+function permissionActionCode($action)
 {
-    if (function_exists('isPlatformOwner') && isPlatformOwner()) {
-        return;
+    if (is_numeric($action)) {
+        return (int)$action;
     }
 
-    if (function_exists('hasPermission')) {
-        $businessId = function_exists('currentBusinessId') ? (int)currentBusinessId() : 0;
-        $branchId = function_exists('currentBranchId') ? (int)currentBranchId() : 0;
+    $map = [
+        'view' => 1,
+        'list' => 2,
+        'add' => 3,
+        'create' => 3,
+        'edit' => 4,
+        'update' => 4,
+        'delete' => 5,
+        'print' => 6,
+        'export' => 7,
+        'approve' => 8,
+        'convert' => 9,
+        'adjust' => 10,
+        'ship' => 11,
+        'generate_invoice' => 12,
+        'generate_proforma_bill' => 13,
+        'generate_quotation' => 14,
+        'generate_sale_order' => 15,
+        'generate_sales_bill' => 16,
+        'create_quotation' => 32,
+        'create_proforma_bill' => 33,
+        'create_sales_bill' => 34,
+        'create_final_invoice' => 35,
+        'receive_payment' => 17,
+        'cancel' => 18,
+        'return' => 19
+    ];
 
-        $moduleKeys = [
-            'sales',
-            'sales_' . $businessId . '_' . $branchId,
-            'sales_list',
-            'sales_list_' . $businessId . '_' . $branchId,
-            'sales_invoice',
-            'sales-bill',
-            'quotation',
-            'proforma_bill'
-        ];
+    $key = strtolower(trim((string)$action));
 
-        foreach ($moduleKeys as $moduleKey) {
-            if (hasPermission($moduleKey, $action)) {
-                return;
+    return $map[$key] ?? 1;
+}
+
+function salesPermissionKeys()
+{
+    $businessId = function_exists('currentBusinessId') ? (int)currentBusinessId() : 0;
+    $branchId = function_exists('currentBranchId') ? (int)currentBranchId() : 0;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Global sales entry keys only.
+    |--------------------------------------------------------------------------
+    | Do not add quotation/proforma/sales list keys here.
+    | Document type permission must be checked separately by document type.
+    |--------------------------------------------------------------------------
+    */
+
+    return [
+        'sales',
+        'sales_' . $businessId . '_' . $branchId
+    ];
+}
+
+function currentRoleIdsForSalesPermission()
+{
+    static $roleIds = null;
+
+    if ($roleIds !== null) {
+        return $roleIds;
+    }
+
+    global $pdo;
+
+    $roleIds = [];
+
+    if (function_exists('currentRoleId')) {
+        $roleId = (int)currentRoleId();
+        if ($roleId > 0) {
+            $roleIds[] = $roleId;
+        }
+    }
+
+    foreach (['role_id', 'current_role_id', 'user_role_id'] as $sessionKey) {
+        if (!empty($_SESSION[$sessionKey])) {
+            $roleId = (int)$_SESSION[$sessionKey];
+            if ($roleId > 0) {
+                $roleIds[] = $roleId;
             }
         }
+    }
 
+    $userId = currentUserIdSafe();
+
+    if ($userId > 0 && isset($pdo) && $pdo instanceof PDO) {
+        try {
+            $stmt = $pdo->prepare("SELECT role_id FROM users WHERE id = :id LIMIT 1");
+            $stmt->execute([':id' => $userId]);
+            $dbRoleId = (int)$stmt->fetchColumn();
+
+            if ($dbRoleId > 0) {
+                $roleIds[] = $dbRoleId;
+            }
+        } catch (Throwable $e) {
+            // Ignore and continue with session role ids.
+        }
+    }
+
+    $roleIds = array_values(array_unique(array_filter(array_map('intval', $roleIds))));
+
+    /*
+    |--------------------------------------------------------------------------
+    | Add parent package roles also.
+    |--------------------------------------------------------------------------
+    | Some roles depend on parent_role_id package permission.
+    |--------------------------------------------------------------------------
+    */
+
+    if ($roleIds && isset($pdo) && $pdo instanceof PDO) {
+        try {
+            $holders = [];
+            $params = [];
+
+            foreach ($roleIds as $index => $roleId) {
+                $key = ':role_' . $index;
+                $holders[] = $key;
+                $params[$key] = $roleId;
+            }
+
+            $stmt = $pdo->prepare("
+                SELECT parent_role_id
+                FROM roles
+                WHERE id IN (" . implode(',', $holders) . ")
+                AND parent_role_id IS NOT NULL
+                AND parent_role_id > 0
+            ");
+            $stmt->execute($params);
+
+            foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $parentRoleId) {
+                $parentRoleId = (int)$parentRoleId;
+                if ($parentRoleId > 0) {
+                    $roleIds[] = $parentRoleId;
+                }
+            }
+        } catch (Throwable $e) {
+            // Ignore parent lookup errors.
+        }
+    }
+
+    $roleIds = array_values(array_unique(array_filter(array_map('intval', $roleIds))));
+
+    return $roleIds;
+}
+
+function roleBasePermissionAllowed($moduleKeys, $actionCode)
+{
+    global $pdo;
+
+    if (!isset($pdo) || !($pdo instanceof PDO)) {
+        return false;
+    }
+
+    if (!is_array($moduleKeys)) {
+        $moduleKeys = [$moduleKeys];
+    }
+
+    $moduleKeys = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $moduleKeys)))));
+
+    if (!$moduleKeys) {
+        return false;
+    }
+
+    $roleIds = currentRoleIdsForSalesPermission();
+
+    if (!$roleIds) {
+        return false;
+    }
+
+    try {
+        $keyHolders = [];
+        $roleHolders = [];
+        $params = [
+            ':action_code' => (string)(int)$actionCode
+        ];
+
+        foreach ($moduleKeys as $index => $moduleKey) {
+            $key = ':menu_key_' . $index;
+            $keyHolders[] = $key;
+            $params[$key] = $moduleKey;
+        }
+
+        foreach ($roleIds as $index => $roleId) {
+            $key = ':role_id_' . $index;
+            $roleHolders[] = $key;
+            $params[$key] = (int)$roleId;
+        }
+
+        $sql = "
+            SELECT 1
+            FROM role_base_access rba
+            INNER JOIN sidebar_menus sm ON sm.id = rba.menu_id
+            WHERE rba.status = 1
+            AND sm.status = 1
+            AND rba.role_id IN (" . implode(',', $roleHolders) . ")
+            AND sm.menu_key IN (" . implode(',', $keyHolders) . ")
+            AND FIND_IN_SET(:action_code, REPLACE(COALESCE(rba.access_actions, ''), ' ', '')) > 0
+            LIMIT 1
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function roleBaseMenuRowsExist($moduleKeys)
+{
+    global $pdo;
+
+    if (!isset($pdo) || !($pdo instanceof PDO)) {
+        return false;
+    }
+
+    if (!is_array($moduleKeys)) {
+        $moduleKeys = [$moduleKeys];
+    }
+
+    $moduleKeys = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $moduleKeys)))));
+    $roleIds = currentRoleIdsForSalesPermission();
+
+    if (!$moduleKeys || !$roleIds) {
+        return false;
+    }
+
+    try {
+        $keyHolders = [];
+        $roleHolders = [];
+        $params = [];
+
+        foreach ($moduleKeys as $index => $moduleKey) {
+            $key = ':rb_exists_menu_' . $index;
+            $keyHolders[] = $key;
+            $params[$key] = $moduleKey;
+        }
+
+        foreach ($roleIds as $index => $roleId) {
+            $key = ':rb_exists_role_' . $index;
+            $roleHolders[] = $key;
+            $params[$key] = (int)$roleId;
+        }
+
+        $sql = "
+            SELECT 1
+            FROM role_base_access rba
+            INNER JOIN sidebar_menus sm ON sm.id = rba.menu_id
+            WHERE rba.role_id IN (" . implode(',', $roleHolders) . ")
+            AND sm.menu_key IN (" . implode(',', $keyHolders) . ")
+            LIMIT 1
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function legacyRoleMenuPermissionAllowed($moduleKeys, $actionCode)
+{
+    global $pdo;
+
+    if (!isset($pdo) || !($pdo instanceof PDO)) {
+        return false;
+    }
+
+    $columnMap = [
+        1 => 'can_view',
+        2 => 'can_view',
+        3 => 'can_add',
+        4 => 'can_edit',
+        5 => 'can_delete',
+        6 => 'can_print',
+        7 => 'can_export',
+        8 => 'can_approve',
+        9 => 'can_convert',
+        10 => 'can_adjust',
+        11 => 'can_ship',
+        12 => 'can_generate_invoice',
+        13 => 'can_generate_invoice',
+        14 => 'can_generate_invoice',
+        15 => 'can_generate_invoice',
+        16 => 'can_generate_invoice'
+    ];
+
+    $actionCode = (int)$actionCode;
+
+    if (empty($columnMap[$actionCode])) {
+        return false;
+    }
+
+    if (!is_array($moduleKeys)) {
+        $moduleKeys = [$moduleKeys];
+    }
+
+    $moduleKeys = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $moduleKeys)))));
+    $roleIds = currentRoleIdsForSalesPermission();
+
+    if (!$moduleKeys || !$roleIds) {
+        return false;
+    }
+
+    try {
+        $keyHolders = [];
+        $roleHolders = [];
+        $params = [];
+
+        foreach ($moduleKeys as $index => $moduleKey) {
+            $key = ':legacy_menu_key_' . $index;
+            $keyHolders[] = $key;
+            $params[$key] = $moduleKey;
+        }
+
+        foreach ($roleIds as $index => $roleId) {
+            $key = ':legacy_role_id_' . $index;
+            $roleHolders[] = $key;
+            $params[$key] = (int)$roleId;
+        }
+
+        $column = $columnMap[$actionCode];
+
+        $sql = "
+            SELECT 1
+            FROM role_menu_permissions rmp
+            INNER JOIN sidebar_menus sm ON sm.id = rmp.menu_id
+            WHERE rmp.status = 1
+            AND sm.status = 1
+            AND rmp.role_id IN (" . implode(',', $roleHolders) . ")
+            AND sm.menu_key IN (" . implode(',', $keyHolders) . ")
+            AND rmp.$column = 1
+            LIMIT 1
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function permissionAllowed($moduleKeys, $action)
+{
+    if (function_exists('isPlatformOwner') && isPlatformOwner()) {
+        return true;
+    }
+
+    $actionCode = permissionActionCode($action);
+
+    if (!is_array($moduleKeys)) {
+        $moduleKeys = [$moduleKeys];
+    }
+
+    if (roleBaseMenuRowsExist($moduleKeys)) {
+        return roleBasePermissionAllowed($moduleKeys, $actionCode);
+    }
+
+    if (legacyRoleMenuPermissionAllowed($moduleKeys, $actionCode)) {
+        return true;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Existing project helper fallback.
+    |--------------------------------------------------------------------------
+    | This remains only as a fallback. The API no longer depends only on it.
+    |--------------------------------------------------------------------------
+    */
+
+    if (function_exists('hasPermission')) {
+        foreach ($moduleKeys as $moduleKey) {
+            if ($moduleKey !== '' && hasPermission($moduleKey, $actionCode)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+function requireSalesPermission($action = 1)
+{
+    if (!permissionAllowed(salesPermissionKeys(), $action)) {
         jsonResponse(false, 'Permission denied.');
     }
 }
@@ -129,38 +507,143 @@ function requireSalesPermission($action = 'view')
 function salesDocumentTypes()
 {
     return [
-        1 => ['label' => 'Quotation', 'permission_key' => 'sales_quotation', 'legacy_keys' => ['quotation']],
-        2 => ['label' => 'Proforma Bill', 'permission_key' => 'sales_proforma_bill', 'legacy_keys' => ['proforma_bill']],
-        3 => ['label' => 'Sales Bill', 'permission_key' => 'sales_bill', 'legacy_keys' => ['sale_order']],
-        4 => ['label' => 'Direct Sale', 'permission_key' => 'sales_direct_sale', 'legacy_keys' => ['sales']],
-        5 => ['label' => 'Final Invoice', 'permission_key' => 'sales_final_invoice', 'legacy_keys' => ['sales_invoice']],
+        1 => [
+            'label' => 'Quotation',
+            'permission_key' => 'sales_quotation_list',
+            'legacy_keys' => ['sales_quotation', 'quotation', 'quotation_list']
+        ],
+        2 => [
+            'label' => 'Proforma Bill',
+            'permission_key' => 'sales_proforma_bill_list',
+            'legacy_keys' => ['sales_proforma_bill', 'proforma_bill', 'proforma_bill_list']
+        ],
+        3 => [
+            'label' => 'Sales Bill',
+            'permission_key' => 'sales_bill_list',
+            'legacy_keys' => ['sales_bill', 'sale_order', 'sales-bill', 'sales_list']
+        ],
+        4 => [
+            'label' => 'Direct Sale',
+            'permission_key' => 'direct_sale_list',
+            'legacy_keys' => ['sales_direct_sale_list', 'sales_direct_sale', 'direct_sale']
+        ],
+        5 => [
+            'label' => 'Final Invoice',
+            'permission_key' => 'final_invoice_list',
+            'legacy_keys' => ['sales_final_invoice_list', 'sales_final_invoice', 'sales_invoice']
+        ],
     ];
+}
+
+function salesEntryCreatableDocumentTypes()
+{
+    /*
+    |--------------------------------------------------------------------------
+    | Sales Entry Create/Add controls document creation.
+    |--------------------------------------------------------------------------
+    | These are the 4 sales documents allowed from Sales Entry.
+    | Sales Order is not used. Direct Sale is not included in this final flow.
+    |--------------------------------------------------------------------------
+    */
+
+    return [1, 2, 3, 5];
+}
+
+function salesEntryCreateAllowed()
+{
+    return permissionAllowed(salesPermissionKeys(), 3);
+}
+
+function salesEntryDocumentCreateActionMap()
+{
+    /*
+    |--------------------------------------------------------------------------
+    | Sales Entry same-row document controls.
+    |--------------------------------------------------------------------------
+    | Document Type ID => Permission Action Code
+    |
+    | 1 = Quotation       => 32 = Create Quotation
+    | 2 = Proforma Bill   => 33 = Create Proforma Bill
+    | 3 = Sales Bill      => 34 = Create Sales Bill
+    | 5 = Final Invoice   => 35 = Create Final Invoice
+    |--------------------------------------------------------------------------
+    */
+
+    return [
+        1 => 32,
+        2 => 33,
+        3 => 34,
+        5 => 35,
+    ];
+}
+
+function salesEntryDocumentCreateAllowed($documentType)
+{
+    $documentType = (int)$documentType;
+    $map = salesEntryDocumentCreateActionMap();
+
+    if (!salesEntryCreateAllowed()) {
+        return false;
+    }
+
+    if (!in_array($documentType, salesEntryCreatableDocumentTypes(), true)) {
+        return false;
+    }
+
+    if (!isset($map[$documentType])) {
+        return false;
+    }
+
+    /*
+     * Important:
+     * Document type dropdown is now controlled from the Sales Entry row itself.
+     * It does NOT use list page Create/Add action 3.
+     */
+    return permissionAllowed(salesPermissionKeys(), $map[$documentType]);
+}
+
+function requireSalesEntryDocumentCreatePermission($documentType)
+{
+    if (!salesEntryDocumentCreateAllowed((int)$documentType)) {
+        jsonResponse(false, 'You do not have permission to create this document type.');
+    }
+}
+
+
+
+function salesDocumentPermissionKeys($documentType)
+{
+    $types = salesDocumentTypes();
+    $documentType = (int)$documentType;
+
+    if (!isset($types[$documentType])) {
+        return [];
+    }
+
+    return array_values(array_unique(array_merge(
+        [$types[$documentType]['permission_key']],
+        $types[$documentType]['legacy_keys'] ?? []
+    )));
 }
 
 function hasSalesDocumentPermission($documentType, $action)
 {
-    $types = salesDocumentTypes();
+    /*
+    |--------------------------------------------------------------------------
+    | Document type permission must be separate from Sales Entry permission.
+    |--------------------------------------------------------------------------
+    | Do not fallback to global 'sales' key here.
+    | This fixes Document Type dropdown and Generate button behaving the same.
+    |--------------------------------------------------------------------------
+    */
 
-    if (!isset($types[$documentType])) {
+    $keys = salesDocumentPermissionKeys((int)$documentType);
+
+    if (!$keys) {
         return false;
     }
 
-    if (function_exists('isPlatformOwner') && isPlatformOwner()) {
-        return true;
-    }
-
-    if (!function_exists('hasPermission')) {
-        return true;
-    }
-
-    $keys = array_merge([$types[$documentType]['permission_key']], $types[$documentType]['legacy_keys'] ?? []);
-    foreach ($keys as $key) {
-        if (hasPermission($key, $action)) {
-            return true;
-        }
-    }
-
-    return false;
+    return permissionAllowed($keys, $action);
 }
 
 function requireSalesDocumentPermission($documentType, $action, $message = 'Document type permission denied.')
@@ -170,6 +653,187 @@ function requireSalesDocumentPermission($documentType, $action, $message = 'Docu
     }
 }
 
+function salesDocumentAllowedTypes($action = 1)
+{
+    $allowed = [];
+
+    foreach (salesDocumentTypes() as $typeId => $type) {
+        if (hasSalesDocumentPermission((int)$typeId, $action)) {
+            $allowed[] = (int)$typeId;
+        }
+    }
+
+    return $allowed;
+}
+
+
+function hasAnySalesDocumentPermission($documentType, array $actions)
+{
+    foreach ($actions as $action) {
+        if (hasSalesDocumentPermission((int)$documentType, $action)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function requireSalesDocumentAnyPermission($documentType, array $actions, $message = 'Document type permission denied.')
+{
+    if (!hasAnySalesDocumentPermission((int)$documentType, $actions)) {
+        jsonResponse(false, $message);
+    }
+}
+
+function salesGenerateActionsForTarget($targetType)
+{
+    $targetType = (int)$targetType;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Generate target -> frontend source action key names.
+    |--------------------------------------------------------------------------
+    | No Generate Quotation.
+    | No Generate Sale Order.
+    |--------------------------------------------------------------------------
+    */
+
+    $map = [
+        2 => ['generate_proforma_bill'],
+        3 => ['generate_sales_bill'],
+        5 => ['generate_invoice']
+    ];
+
+    return $map[$targetType] ?? [];
+}
+
+function salesGenerateActionCodesForTarget($targetType)
+{
+    $targetType = (int)$targetType;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Final generate action mapping.
+    |--------------------------------------------------------------------------
+    | 12 = Generate Final Invoice
+    | 13 = Generate Proforma Bill
+    | 16 = Generate Sales Bill
+    |
+    | Removed from sales flow:
+    | 14 = Generate Quotation
+    | 15 = Generate Sale Order (not used in Sales flow)
+    |--------------------------------------------------------------------------
+    */
+
+    $map = [
+        2 => [13],
+        3 => [16],
+        5 => [12],
+    ];
+
+    return $map[$targetType] ?? [];
+}
+
+function allowedGenerateTargetsForSource($sourceType)
+{
+    $sourceType = (int)$sourceType;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Final row based generate flow.
+    |--------------------------------------------------------------------------
+    | Quotation row  -> Proforma, Sales Bill, Final Invoice
+    | Proforma row   -> Sales Bill, Final Invoice
+    | Sales Bill row -> Final Invoice
+    | Final Invoice  -> No generate
+    |--------------------------------------------------------------------------
+    */
+
+    $map = [
+        1 => [2, 3, 5],
+        2 => [3, 5],
+        3 => [5],
+    ];
+
+    return $map[$sourceType] ?? [];
+}
+
+function canGenerateSourceToTarget($sourceType, $targetType)
+{
+    $sourceType = (int)$sourceType;
+    $targetType = (int)$targetType;
+
+    if ($sourceType <= 0 || $targetType <= 0 || $sourceType === $targetType) {
+        return false;
+    }
+
+    if (!in_array($targetType, allowedGenerateTargetsForSource($sourceType), true)) {
+        return false;
+    }
+
+    foreach (salesGenerateActionCodesForTarget($targetType) as $actionCode) {
+        if (hasSalesDocumentPermission($sourceType, $actionCode)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function generatePermissionTextForTarget($targetType)
+{
+    $targetType = (int)$targetType;
+
+    $map = [
+        2 => 'source document action 13 Generate Proforma Bill',
+        3 => 'source document action 16 Generate Sales Bill',
+        5 => 'source document action 12 Generate Final Invoice'
+    ];
+
+    return $map[$targetType] ?? 'source document generate permission';
+}
+
+function salesDocumentAllowedTypesAny(array $actions)
+{
+    $allowed = [];
+
+    foreach (salesDocumentTypes() as $typeId => $type) {
+        if (hasAnySalesDocumentPermission((int)$typeId, $actions)) {
+            $allowed[] = (int)$typeId;
+        }
+    }
+
+    return $allowed;
+}
+
+function salesEntryDataAllowed()
+{
+    /*
+     * Sales Entry is controlled by the Sales Entry menu.
+     * Generate mode can also open when the source document has generate permission.
+     */
+    return permissionAllowed(salesPermissionKeys(), 1)
+        || permissionAllowed(salesPermissionKeys(), 2)
+        || permissionAllowed(salesPermissionKeys(), 3)
+        || permissionAllowed(salesPermissionKeys(), 4)
+        || permissionAllowed(salesPermissionKeys(), 6)
+        || permissionAllowed(salesPermissionKeys(), 17)
+        || !empty(salesDocumentAllowedTypesAny([12, 13, 16]));
+}
+
+function requireSalesEntryDataPermission()
+{
+    if (!salesEntryDataAllowed()) {
+        jsonResponse(false, 'Permission denied.');
+    }
+}
+
+
+function salesDocumentAny($action)
+{
+    return !empty(salesDocumentAllowedTypesAny([(int)permissionActionCode($action)]));
+}
+
 
 function salesDocumentPermissionPayload()
 {
@@ -177,17 +841,47 @@ function salesDocumentPermissionPayload()
     $permissions = [];
     $allowedDocumentTypes = [];
 
+    $salesEntryCreateAllowed = salesEntryCreateAllowed();
+
     foreach ($types as $typeId => $type) {
+        $typeId = (int)$typeId;
+
         $permissions[$typeId] = [
-            'view' => hasSalesDocumentPermission($typeId, 'view'),
-            'add' => hasSalesDocumentPermission($typeId, 'add'),
-            'edit' => hasSalesDocumentPermission($typeId, 'edit'),
-            'delete' => hasSalesDocumentPermission($typeId, 'delete'),
-            'print' => hasSalesDocumentPermission($typeId, 'print'),
-            'convert' => hasSalesDocumentPermission($typeId, 'convert'),
-            'generate_invoice' => hasSalesDocumentPermission($typeId, 'generate_invoice'),
+            'view' => hasSalesDocumentPermission($typeId, 1),
+            'list' => hasSalesDocumentPermission($typeId, 2),
+
+            /*
+             * Direct Sales Entry document dropdown is role based document-wise.
+             * Sales Entry action 3 opens create mode.
+             * Target document list action 3 decides whether that document type appears.
+             */
+            'add' => salesEntryDocumentCreateAllowed($typeId),
+
+            'edit' => hasSalesDocumentPermission($typeId, 4),
+            'delete' => hasSalesDocumentPermission($typeId, 5),
+            'print' => hasSalesDocumentPermission($typeId, 6),
+            'export' => hasSalesDocumentPermission($typeId, 7),
+
+            /*
+             * Generate icons are source-row based.
+             * Do not use Generate Quotation or Generate Sale Order.
+             */
+            'generate_invoice' => in_array(5, allowedGenerateTargetsForSource($typeId), true) && hasSalesDocumentPermission($typeId, 12),
+            'generate_proforma_bill' => in_array(2, allowedGenerateTargetsForSource($typeId), true) && hasSalesDocumentPermission($typeId, 13),
+            'generate_quotation' => false,
+            'generate_sale_order' => false,
+            'generate_sales_bill' => in_array(3, allowedGenerateTargetsForSource($typeId), true) && hasSalesDocumentPermission($typeId, 16),
+
+            'receive_payment' => hasSalesDocumentPermission($typeId, 17),
+            'cancel' => hasSalesDocumentPermission($typeId, 18),
+            'whatsapp' => hasSalesDocumentPermission($typeId, 22),
+            'email' => hasSalesDocumentPermission($typeId, 23),
         ];
 
+        /*
+         * Sales Entry dropdown shows only document types allowed by role base:
+         * Sales Entry action 3 + target document action 3.
+         */
         if ($permissions[$typeId]['add']) {
             $allowedDocumentTypes[] = $typeId;
         }
@@ -196,14 +890,240 @@ function salesDocumentPermissionPayload()
     return [
         'document_types' => $types,
         'allowed_document_types' => $allowedDocumentTypes,
-        'permissions' => $permissions
+        'view_document_types' => salesDocumentAllowedTypes(1),
+        'list_document_types' => salesDocumentAllowedTypes(2),
+        'permissions' => $permissions,
+        'can_view' => permissionAllowed(salesPermissionKeys(), 1),
+        'can_list' => permissionAllowed(salesPermissionKeys(), 2),
+        'can_add' => $salesEntryCreateAllowed && !empty($allowedDocumentTypes),
+        'can_edit' => permissionAllowed(salesPermissionKeys(), 4),
+        'can_delete' => permissionAllowed(salesPermissionKeys(), 5),
+        'can_print' => permissionAllowed(salesPermissionKeys(), 6),
+        'can_export' => permissionAllowed(salesPermissionKeys(), 7),
+        'can_generate_invoice' => salesDocumentAny(12),
+        'can_generate_proforma_bill' => salesDocumentAny(13),
+        'can_generate_quotation' => false,
+        'can_generate_sale_order' => false,
+        'can_generate_sales_bill' => salesDocumentAny(16),
+        'can_receive_payment' => permissionAllowed(salesPermissionKeys(), 17),
+        'can_cancel' => permissionAllowed(salesPermissionKeys(), 18),
+        'can_quick_add_customer' => permissionAllowed(['customers', 'customers_create'], 3),
+        'can_view_customers' => permissionAllowed(['customers', 'customers_create'], 1),
+        'can_hold_bill' => $salesEntryCreateAllowed && !empty($allowedDocumentTypes),
+        'can_clear_draft' => $salesEntryCreateAllowed && !empty($allowedDocumentTypes)
     ];
 }
 
 function getSalesDocumentPermissions(PDO $pdo)
 {
-    requireSalesPermission('view');
+    if (!salesEntryDataAllowed()) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
     jsonOk('Document permissions loaded.', salesDocumentPermissionPayload());
+}
+
+function getPageContext(PDO $pdo)
+{
+    if (!salesEntryDataAllowed()) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
+    $payload = salesDocumentPermissionPayload();
+
+    jsonOk('Page context loaded.', [
+        'context' => array_merge($payload, [
+            'page_title' => 'Sales',
+            'page_note' => 'Sales documents controlled by role permission.',
+            'create_url' => BASE_URL . 'pages/sales-create.php',
+            'payment_url' => BASE_URL . 'pages/customer-payments.php'
+        ])
+    ]);
+}
+
+function customerPaymentCan($action)
+{
+    $actionCode = permissionActionCode($action);
+
+    return permissionAllowed([
+        'customer_payments',
+        'customer-payments',
+        'customers',
+        'sales'
+    ], $actionCode);
+}
+
+function requireCustomerPaymentPermission($action)
+{
+    if (!customerPaymentCan($action)) {
+        jsonResponse(false, 'Permission denied.');
+    }
+}
+
+function customerPaymentsPageContext(PDO $pdo)
+{
+    if (!customerPaymentCan(1) && !customerPaymentCan(2)) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
+    jsonOk('Page context loaded.', [
+        'context' => [
+            'can_view' => customerPaymentCan(1),
+            'can_list' => customerPaymentCan(2),
+            'can_receive_payment' => customerPaymentCan(17) || customerPaymentCan(3),
+            'can_edit' => customerPaymentCan(4),
+            'can_cancel' => customerPaymentCan(18) || customerPaymentCan(5),
+            'can_sales_list' => permissionAllowed(salesPermissionKeys(), 1) || permissionAllowed(salesPermissionKeys(), 2),
+            'page_title' => 'Customer Payments',
+            'page_note' => 'Individual bill payment, overall FIFO payment and opening balance payment',
+            'new_payment_label' => 'New Payment',
+            'sales_list_url' => BASE_URL . 'pages/all-sales-list.php'
+        ]
+    ]);
+}
+
+
+function salesPermissionDebug(PDO $pdo)
+{
+    $roleIds = currentRoleIdsForSalesPermission();
+
+    $menuKeys = array_values(array_unique(array_merge(
+        salesPermissionKeys(),
+        salesDocumentPermissionKeys(1),
+        salesDocumentPermissionKeys(2),
+        salesDocumentPermissionKeys(3),
+        salesDocumentPermissionKeys(4),
+        salesDocumentPermissionKeys(5),
+        ['all_sales_list', 'sales_print', 'customer_payments']
+    )));
+
+    $menuRows = [];
+    $roleBaseRows = [];
+    $legacyRows = [];
+
+    if ($menuKeys) {
+        $holders = [];
+        $params = [];
+
+        foreach ($menuKeys as $index => $menuKey) {
+            $key = ':menu_key_' . $index;
+            $holders[] = $key;
+            $params[$key] = $menuKey;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT id, parent_id, menu_for, menu_key, menu_name, menu_url, allowed_actions, status
+            FROM sidebar_menus
+            WHERE menu_key IN (" . implode(',', $holders) . ")
+            ORDER BY sort_order ASC, id ASC
+        ");
+        $stmt->execute($params);
+        $menuRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    if ($menuKeys && $roleIds) {
+        $keyHolders = [];
+        $roleHolders = [];
+        $params = [];
+
+        foreach ($menuKeys as $index => $menuKey) {
+            $key = ':rba_menu_key_' . $index;
+            $keyHolders[] = $key;
+            $params[$key] = $menuKey;
+        }
+
+        foreach ($roleIds as $index => $roleId) {
+            $key = ':rba_role_id_' . $index;
+            $roleHolders[] = $key;
+            $params[$key] = (int)$roleId;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT
+                rba.role_id,
+                r.role_name,
+                r.role_type,
+                r.parent_role_id,
+                sm.menu_key,
+                sm.menu_name,
+                sm.menu_url,
+                sm.allowed_actions,
+                rba.access_actions,
+                rba.status
+            FROM role_base_access rba
+            INNER JOIN roles r ON r.id = rba.role_id
+            INNER JOIN sidebar_menus sm ON sm.id = rba.menu_id
+            WHERE rba.role_id IN (" . implode(',', $roleHolders) . ")
+            AND sm.menu_key IN (" . implode(',', $keyHolders) . ")
+            ORDER BY rba.role_id ASC, sm.sort_order ASC, sm.id ASC
+        ");
+        $stmt->execute($params);
+        $roleBaseRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        try {
+            $stmt = $pdo->prepare("
+                SELECT
+                    rmp.role_id,
+                    r.role_name,
+                    sm.menu_key,
+                    sm.menu_name,
+                    rmp.can_view,
+                    rmp.can_add,
+                    rmp.can_edit,
+                    rmp.can_delete,
+                    rmp.can_print,
+                    rmp.can_export,
+                    rmp.can_convert,
+                    rmp.can_generate_invoice,
+                    rmp.status
+                FROM role_menu_permissions rmp
+                INNER JOIN roles r ON r.id = rmp.role_id
+                INNER JOIN sidebar_menus sm ON sm.id = rmp.menu_id
+                WHERE rmp.role_id IN (" . implode(',', $roleHolders) . ")
+                AND sm.menu_key IN (" . implode(',', $keyHolders) . ")
+                ORDER BY rmp.role_id ASC, sm.sort_order ASC, sm.id ASC
+            ");
+            $stmt->execute($params);
+            $legacyRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Throwable $e) {
+            $legacyRows = [];
+        }
+    }
+
+    $docPermissions = [];
+
+    foreach (salesDocumentTypes() as $typeId => $type) {
+        $docPermissions[$typeId] = [
+            'label' => $type['label'],
+            'keys_checked' => salesDocumentPermissionKeys($typeId),
+            'add_document_type' => hasSalesDocumentPermission($typeId, 3),
+            'view' => hasSalesDocumentPermission($typeId, 1),
+            'list' => hasSalesDocumentPermission($typeId, 2),
+            'edit' => hasSalesDocumentPermission($typeId, 4),
+            'print' => hasSalesDocumentPermission($typeId, 6),
+            'convert' => hasSalesDocumentPermission($typeId, 9),
+            'generate_invoice' => hasSalesDocumentPermission($typeId, 12),
+            'generate_proforma_bill' => hasSalesDocumentPermission($typeId, 13),
+            'generate_quotation' => false,
+            'generate_sale_order' => false,
+            'generate_sales_bill' => hasSalesDocumentPermission($typeId, 16),
+            'receive_payment' => hasSalesDocumentPermission($typeId, 17),
+            'cancel' => hasSalesDocumentPermission($typeId, 18)
+        ];
+    }
+
+    jsonOk('Sales permission debug loaded.', [
+        'debug' => [
+            'current_user_id' => currentUserIdSafe(),
+            'session_role_id' => $_SESSION['role_id'] ?? null,
+            'role_ids_checked' => $roleIds,
+            'global_sales_keys' => salesPermissionKeys(),
+            'document_permissions' => $docPermissions,
+            'sidebar_menu_rows' => $menuRows,
+            'role_base_access_rows' => $roleBaseRows,
+            'legacy_role_menu_permission_rows' => $legacyRows
+        ]
+    ]);
 }
 
 
@@ -285,7 +1205,11 @@ function round2($value)
 
 function listSales(PDO $pdo)
 {
-    requireSalesPermission('view');
+    $allowedListTypes = salesDocumentAllowedTypesAny([1, 2]);
+
+    if (!$allowedListTypes) {
+        jsonResponse(false, 'No sales document permission available.');
+    }
 
     $scope = getScope();
     $search = cleanInput($_GET['search'] ?? '');
@@ -301,8 +1225,24 @@ function listSales(PDO $pdo)
     ];
 
     if ($documentType > 0) {
+        requireSalesDocumentAnyPermission(
+            $documentType,
+            [1, 2],
+            'You do not have permission to list this document type.'
+        );
+
         $where .= " AND s.document_type = :document_type";
         $params[':document_type'] = $documentType;
+    } else {
+        $holders = [];
+
+        foreach ($allowedListTypes as $index => $typeId) {
+            $key = ':allowed_document_type_' . $index;
+            $holders[] = $key;
+            $params[$key] = (int)$typeId;
+        }
+
+        $where .= " AND s.document_type IN (" . implode(',', $holders) . ")";
     }
 
     if ($status > 0) {
@@ -321,14 +1261,29 @@ function listSales(PDO $pdo)
     }
 
     if ($search !== '') {
-        $where .= " AND (s.sales_no LIKE :search_sales_no OR c.customer_name LIKE :search_customer OR c.mobile LIKE :search_mobile)";
-        $params[':search_sales_no'] = '%' . $search . '%';
-        $params[':search_customer'] = '%' . $search . '%';
-        $params[':search_mobile'] = '%' . $search . '%';
+        /*
+        |--------------------------------------------------------------------------
+        | Unique PDO placeholders avoid SQLSTATE[HY093].
+        |--------------------------------------------------------------------------
+        */
+
+        $where .= "
+            AND (
+                s.sales_no LIKE :search_sales_no
+                OR c.customer_name LIKE :search_customer
+                OR c.mobile LIKE :search_mobile
+            )
+        ";
+
+        $searchValue = '%' . $search . '%';
+
+        $params[':search_sales_no'] = $searchValue;
+        $params[':search_customer'] = $searchValue;
+        $params[':search_mobile'] = $searchValue;
     }
 
     $stmt = $pdo->prepare("
-        SELECT 
+        SELECT
             s.*,
             c.customer_name,
             c.mobile AS customer_mobile
@@ -340,12 +1295,45 @@ function listSales(PDO $pdo)
     ");
     $stmt->execute($params);
 
-    jsonOk('Sales loaded.', ['rows' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    foreach ($rows as &$row) {
+        $rowDocumentType = (int)($row['document_type'] ?? 0);
+
+        $row['can_view'] = hasSalesDocumentPermission($rowDocumentType, 1);
+        $row['can_list'] = hasSalesDocumentPermission($rowDocumentType, 2);
+        $row['can_edit'] = hasSalesDocumentPermission($rowDocumentType, 4);
+        $row['can_delete'] = hasSalesDocumentPermission($rowDocumentType, 5);
+        $row['can_print'] = hasSalesDocumentPermission($rowDocumentType, 6);
+        $row['can_export'] = hasSalesDocumentPermission($rowDocumentType, 7);
+        $row['can_convert'] = false;
+        $row['can_generate_invoice'] = in_array(5, allowedGenerateTargetsForSource($rowDocumentType), true) && hasSalesDocumentPermission($rowDocumentType, 12);
+        $row['can_generate_proforma_bill'] = in_array(2, allowedGenerateTargetsForSource($rowDocumentType), true) && hasSalesDocumentPermission($rowDocumentType, 13);
+        $row['can_generate_quotation'] = false;
+        $row['can_generate_sale_order'] = false;
+        $row['can_generate_sales_bill'] = in_array(3, allowedGenerateTargetsForSource($rowDocumentType), true) && hasSalesDocumentPermission($rowDocumentType, 16);
+        $row['can_receive_payment'] = hasSalesDocumentPermission($rowDocumentType, 17) || customerPaymentCan(17);
+        $row['can_cancel'] = hasSalesDocumentPermission($rowDocumentType, 18);
+        $row['can_whatsapp'] = hasSalesDocumentPermission($rowDocumentType, 22);
+        $row['can_email'] = hasSalesDocumentPermission($rowDocumentType, 23);
+    }
+    unset($row);
+
+    $permissionPayload = salesDocumentPermissionPayload();
+
+    jsonOk('Sales loaded.', [
+        'rows' => $rows,
+        'document_types' => $permissionPayload['document_types'],
+        'permissions' => $permissionPayload['permissions'],
+        'allowed_document_types' => $permissionPayload['allowed_document_types'],
+        'view_document_types' => $permissionPayload['view_document_types'],
+        'list_document_types' => $permissionPayload['list_document_types']
+    ]);
 }
 
 function getSale(PDO $pdo)
 {
-    requireSalesPermission('view');
+    requireSalesEntryDataPermission();
 
     $scope = getScope();
     $id = (int)($_GET['id'] ?? 0);
@@ -372,7 +1360,7 @@ function getSale(PDO $pdo)
         jsonResponse(false, 'Sale not found.');
     }
 
-    requireSalesDocumentPermission((int)$sale['document_type'], 'view', 'You do not have permission to view this document type.');
+    requireSalesDocumentAnyPermission((int)$sale['document_type'], [1, 2, 4, 12, 13, 14, 15, 16], 'You do not have permission to open this document type.');
 
     $itemsStmt = $pdo->prepare("
         SELECT *
@@ -408,7 +1396,7 @@ function getSale(PDO $pdo)
 
 function searchCustomers(PDO $pdo)
 {
-    requireSalesPermission('view');
+    requireSalesEntryDataPermission();
 
     $scope = getScope();
     $q = cleanInput($_GET['q'] ?? '');
@@ -449,7 +1437,7 @@ function searchCustomers(PDO $pdo)
 
 function searchProducts(PDO $pdo)
 {
-    requireSalesPermission('view');
+    requireSalesEntryDataPermission();
 
     $scope = getScope();
     $q = cleanInput($_GET['q'] ?? '');
@@ -516,7 +1504,7 @@ function searchProducts(PDO $pdo)
 
 function getProductBatches(PDO $pdo)
 {
-    requireSalesPermission('view');
+    requireSalesEntryDataPermission();
 
     $scope = getScope();
     $productId = (int)($_GET['product_id'] ?? 0);
@@ -643,7 +1631,7 @@ function ensureDefaultPaymentModes(PDO $pdo, array $scope)
 
 function getPaymentModes(PDO $pdo)
 {
-    requireSalesPermission('view');
+    requireSalesEntryDataPermission();
 
     $scope = getScope();
 
@@ -676,7 +1664,7 @@ function salesDocumentLabelByType($typeId)
 
 function listCustomerDueDocuments(PDO $pdo)
 {
-    requireSalesPermission('view');
+    requireCustomerPaymentPermission(1);
 
     $scope = getScope();
     $customerId = (int)($_GET['customer_id'] ?? 0);
@@ -740,7 +1728,7 @@ function getPaymentModeSummary(PDO $pdo, array $scope, $paymentId)
 
 function paymentPageInit(PDO $pdo)
 {
-    requireSalesPermission('view');
+    requireCustomerPaymentPermission(1);
 
     $scope = getScope();
     ensureDefaultPaymentModes($pdo, $scope);
@@ -806,7 +1794,7 @@ function paymentPageInit(PDO $pdo)
 
 function listCustomerPayments(PDO $pdo)
 {
-    requireSalesPermission('view');
+    requireCustomerPaymentPermission(2);
 
     $scope = getScope();
     $customerId = (int)($_GET['customer_id'] ?? 0);
@@ -872,7 +1860,7 @@ function listCustomerPayments(PDO $pdo)
 
 function getCustomerPayment(PDO $pdo)
 {
-    requireSalesPermission('view');
+    requireCustomerPaymentPermission(4);
 
     $scope = getScope();
     $paymentId = (int)($_GET['id'] ?? 0);
@@ -1079,12 +2067,12 @@ function cancelCustomerPaymentSplits(PDO $pdo, array $scope, $paymentId)
 
 function saveCustomerPayment(PDO $pdo)
 {
-    requireSalesPermission('add');
-
     $scope = getScope();
     $userId = currentUserIdSafe();
 
     $paymentId = (int)($_POST['payment_id'] ?? 0);
+    requireCustomerPaymentPermission($paymentId > 0 ? 4 : 17);
+
     $customerId = (int)($_POST['customer_id'] ?? 0);
     $paymentType = (int)($_POST['payment_type'] ?? 0);
     $salesId = (int)($_POST['sales_id'] ?? 0);
@@ -1232,7 +2220,7 @@ function saveCustomerPayment(PDO $pdo)
 
 function cancelCustomerPayment(PDO $pdo)
 {
-    requireSalesPermission('delete');
+    requireCustomerPaymentPermission(18);
 
     $scope = getScope();
     $userId = currentUserIdSafe();
@@ -1746,15 +2734,15 @@ function saveSale(PDO $pdo)
         $documentType = $targetType;
         $saleId = $sourceSaleId;
 
-        requireSalesDocumentPermission($sourceType, 'convert', 'You do not have permission to generate from the source document.');
-        requireSalesDocumentPermission($targetType, 'add', 'You do not have permission to generate the target document.');
-
-        if ($targetType === 5) {
-            requireSalesDocumentPermission($sourceType, 'generate_invoice', 'You do not have permission to generate final invoice from this document.');
+        if (!canGenerateSourceToTarget($sourceType, $targetType)) {
+            jsonResponse(
+                false,
+                'You do not have permission to generate this document. Required permission: source document generate action. Check ' . generatePermissionTextForTarget($targetType) . '.'
+            );
         }
     }
 
-    requireSalesPermission('view');
+    requireSalesEntryDataPermission();
 
     $customerId = (int)($data['customer_id'] ?? 0);
     $invoiceType = (int)($data['invoice_type'] ?? 1);
@@ -1775,7 +2763,7 @@ function saveSale(PDO $pdo)
         jsonResponse(false, 'Select customer.');
     }
 
-    if (!in_array($documentType, [1,2,3,4,5], true)) {
+    if (!in_array($documentType, salesEntryCreatableDocumentTypes(), true)) {
         jsonResponse(false, 'Invalid document type.');
     }
 
@@ -1788,7 +2776,12 @@ function saveSale(PDO $pdo)
     }
 
     if (!$isConvertMode && $saleId <= 0) {
-        requireSalesDocumentPermission($documentType, 'add', 'You do not have permission to create this document type.');
+        /*
+         * Direct Sales Entry save must be controlled from the Sales Entry row:
+         * Sales Entry action 3 + selected document action 32/33/34/35.
+         */
+        requireSalesPermission('add');
+        requireSalesEntryDocumentCreatePermission($documentType);
     }
 
     $shouldDeductStock = in_array($documentType, [4,5], true);
@@ -1824,7 +2817,9 @@ function saveSale(PDO $pdo)
             } else {
                 // Existing normal edit keeps document type locked.
                 $documentType = $oldDocumentType;
-                requireSalesDocumentPermission($documentType, 'edit', 'You do not have permission to edit this document type.');
+                if (!permissionAllowed(salesPermissionKeys(), 4) && !hasSalesDocumentPermission($documentType, 'edit')) {
+                    jsonResponse(false, 'You do not have permission to edit this document.');
+                }
             }
 
             if ((int)$oldSale['stock_deducted'] === 1) {
@@ -3043,11 +4038,6 @@ function getDocumentPrefix(PDO $pdo, array $scope, $documentType)
 
 function deleteSale(PDO $pdo, $cancel = false)
 {
-    requireSalesPermission('delete');
-
-    if ($cancel) {
-        requireSalesPermission('adjust');
-    }
 
     $scope = getScope();
     $userId = currentUserIdSafe();
@@ -3065,6 +4055,12 @@ function deleteSale(PDO $pdo, $cancel = false)
         if (!$sale) {
             throw new Exception('Sale not found.');
         }
+
+        requireSalesDocumentPermission(
+            (int)$sale['document_type'],
+            $cancel ? 18 : 5,
+            $cancel ? 'You do not have permission to cancel this document type.' : 'You do not have permission to delete this document type.'
+        );
 
         if ((int)$sale['status'] === 3 || (int)$sale['status'] === 4) {
             throw new Exception('Sale already closed.');

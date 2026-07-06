@@ -52,37 +52,323 @@ function currentBrId(): int
 function docTypes(): array
 {
     return [
-        1 => ['label' => 'Quotation', 'permission_key' => 'sales_quotation', 'legacy_keys' => ['quotation']],
-        2 => ['label' => 'Proforma Bill', 'permission_key' => 'sales_proforma_bill', 'legacy_keys' => ['proforma_bill']],
-        3 => ['label' => 'Sales Bill', 'permission_key' => 'sales_bill', 'legacy_keys' => ['sale_order']],
-        4 => ['label' => 'Direct Sale', 'permission_key' => 'sales_direct_sale', 'legacy_keys' => ['sales']],
-        5 => ['label' => 'Tax Invoice', 'permission_key' => 'sales_final_invoice', 'legacy_keys' => ['sales_invoice']],
+        1 => ['label' => 'Quotation', 'permission_key' => 'sales_quotation_list', 'legacy_keys' => ['sales_quotation', 'quotation', 'quotation_list']],
+        2 => ['label' => 'Proforma Bill', 'permission_key' => 'sales_proforma_bill_list', 'legacy_keys' => ['sales_proforma_bill', 'proforma_bill', 'proforma_bill_list']],
+        3 => ['label' => 'Sales Bill', 'permission_key' => 'sales_bill_list', 'legacy_keys' => ['sales_bill', 'sale_order', 'sales-bill', 'sales_list']],
+        4 => ['label' => 'Direct Sale', 'permission_key' => 'direct_sale_list', 'legacy_keys' => ['sales_direct_sale_list', 'sales_direct_sale', 'direct_sale', 'sales']],
+        5 => ['label' => 'Final Invoice', 'permission_key' => 'final_invoice_list', 'legacy_keys' => ['sales_final_invoice_list', 'sales_final_invoice', 'sales_invoice']],
     ];
 }
 
-function canPrintDoc(int $documentType): bool
+function svpPermissionActionCode($action): int
+{
+    if (is_numeric($action)) {
+        return (int)$action;
+    }
+
+    $map = [
+        'view' => 1,
+        'list' => 2,
+        'add' => 3,
+        'create' => 3,
+        'edit' => 4,
+        'delete' => 5,
+        'print' => 6,
+        'pdf' => 6,
+        'export' => 7,
+        'generate_invoice' => 12,
+        'generate_proforma_bill' => 13,
+        'generate_sales_bill' => 16,
+        'receive_payment' => 17,
+        'cancel' => 18,
+        'whatsapp' => 22,
+        'email' => 23,
+        'download' => 21
+    ];
+
+    $key = strtolower(trim((string)$action));
+
+    return $map[$key] ?? 1;
+}
+
+function svpDocumentPermissionKeys(int $documentType): array
+{
+    $types = [
+        1 => ['sales_quotation_list', 'sales_quotation', 'quotation', 'quotation_list'],
+        2 => ['sales_proforma_bill_list', 'sales_proforma_bill', 'proforma_bill', 'proforma_bill_list'],
+        3 => ['sales_bill_list', 'sales_bill', 'sale_order', 'sales-bill', 'sales_list'],
+        4 => ['direct_sale_list', 'sales_direct_sale_list', 'sales_direct_sale', 'direct_sale', 'sales'],
+        5 => ['final_invoice_list', 'sales_final_invoice_list', 'sales_final_invoice', 'sales_invoice'],
+    ];
+
+    return $types[$documentType] ?? [];
+}
+
+function svpCurrentRoleIds(): array
+{
+    static $roleIds = null;
+
+    if ($roleIds !== null) {
+        return $roleIds;
+    }
+
+    global $pdo;
+
+    $roleIds = [];
+
+    if (function_exists('currentRoleId')) {
+        $roleId = (int)currentRoleId();
+        if ($roleId > 0) {
+            $roleIds[] = $roleId;
+        }
+    }
+
+    foreach (['role_id', 'current_role_id', 'user_role_id'] as $sessionKey) {
+        if (!empty($_SESSION[$sessionKey])) {
+            $roleId = (int)$_SESSION[$sessionKey];
+            if ($roleId > 0) {
+                $roleIds[] = $roleId;
+            }
+        }
+    }
+
+    if (function_exists('currentUserId')) {
+        $userId = (int)currentUserId();
+
+        if ($userId > 0 && isset($pdo) && $pdo instanceof PDO) {
+            try {
+                $stmt = $pdo->prepare("SELECT role_id FROM users WHERE id = :id LIMIT 1");
+                $stmt->execute([':id' => $userId]);
+                $dbRoleId = (int)$stmt->fetchColumn();
+
+                if ($dbRoleId > 0) {
+                    $roleIds[] = $dbRoleId;
+                }
+            } catch (Throwable $e) {
+                // Ignore fallback errors.
+            }
+        }
+    }
+
+    $roleIds = array_values(array_unique(array_filter(array_map('intval', $roleIds))));
+
+    /*
+     * Include parent package role also.
+     */
+    if ($roleIds && isset($pdo) && $pdo instanceof PDO) {
+        try {
+            $holders = [];
+            $params = [];
+
+            foreach ($roleIds as $index => $roleId) {
+                $key = ':role_' . $index;
+                $holders[] = $key;
+                $params[$key] = $roleId;
+            }
+
+            $stmt = $pdo->prepare("
+                SELECT parent_role_id
+                FROM roles
+                WHERE id IN (" . implode(',', $holders) . ")
+                AND parent_role_id IS NOT NULL
+                AND parent_role_id > 0
+            ");
+            $stmt->execute($params);
+
+            foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $parentRoleId) {
+                $parentRoleId = (int)$parentRoleId;
+                if ($parentRoleId > 0) {
+                    $roleIds[] = $parentRoleId;
+                }
+            }
+        } catch (Throwable $e) {
+            // Ignore parent role lookup errors.
+        }
+    }
+
+    return array_values(array_unique(array_filter(array_map('intval', $roleIds))));
+}
+
+function svpRoleBaseRowsExist(array $moduleKeys): bool
+{
+    global $pdo;
+
+    if (!isset($pdo) || !($pdo instanceof PDO)) {
+        return false;
+    }
+
+    $moduleKeys = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $moduleKeys)))));
+    $roleIds = svpCurrentRoleIds();
+
+    if (!$moduleKeys || !$roleIds) {
+        return false;
+    }
+
+    try {
+        $keyHolders = [];
+        $roleHolders = [];
+        $params = [];
+
+        foreach ($moduleKeys as $index => $moduleKey) {
+            $key = ':svp_menu_key_' . $index;
+            $keyHolders[] = $key;
+            $params[$key] = $moduleKey;
+        }
+
+        foreach ($roleIds as $index => $roleId) {
+            $key = ':svp_role_id_' . $index;
+            $roleHolders[] = $key;
+            $params[$key] = $roleId;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT 1
+            FROM role_base_access rba
+            INNER JOIN sidebar_menus sm ON sm.id = rba.menu_id
+            WHERE rba.role_id IN (" . implode(',', $roleHolders) . ")
+            AND sm.menu_key IN (" . implode(',', $keyHolders) . ")
+            LIMIT 1
+        ");
+        $stmt->execute($params);
+
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function svpRoleBaseAllowed(array $moduleKeys, $action): bool
+{
+    global $pdo;
+
+    if (!isset($pdo) || !($pdo instanceof PDO)) {
+        return false;
+    }
+
+    $moduleKeys = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $moduleKeys)))));
+    $roleIds = svpCurrentRoleIds();
+    $actionCode = svpPermissionActionCode($action);
+
+    if (!$moduleKeys || !$roleIds) {
+        return false;
+    }
+
+    try {
+        $keyHolders = [];
+        $roleHolders = [];
+        $params = [
+            ':action_code' => (string)$actionCode
+        ];
+
+        foreach ($moduleKeys as $index => $moduleKey) {
+            $key = ':svp_allowed_menu_key_' . $index;
+            $keyHolders[] = $key;
+            $params[$key] = $moduleKey;
+        }
+
+        foreach ($roleIds as $index => $roleId) {
+            $key = ':svp_allowed_role_id_' . $index;
+            $roleHolders[] = $key;
+            $params[$key] = $roleId;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT 1
+            FROM role_base_access rba
+            INNER JOIN sidebar_menus sm ON sm.id = rba.menu_id
+            WHERE rba.status = 1
+            AND sm.status = 1
+            AND rba.role_id IN (" . implode(',', $roleHolders) . ")
+            AND sm.menu_key IN (" . implode(',', $keyHolders) . ")
+            AND FIND_IN_SET(:action_code, REPLACE(COALESCE(rba.access_actions, ''), ' ', '')) > 0
+            LIMIT 1
+        ");
+        $stmt->execute($params);
+
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function svpFallbackHasPermission(array $moduleKeys, $action): bool
+{
+    if (!function_exists('hasPermission')) {
+        return false;
+    }
+
+    $actionCode = svpPermissionActionCode($action);
+    $actionNameMap = [
+        1 => 'view',
+        2 => 'list',
+        3 => 'add',
+        4 => 'edit',
+        5 => 'delete',
+        6 => 'print',
+        7 => 'export',
+        17 => 'receive_payment',
+        18 => 'cancel',
+        22 => 'whatsapp',
+        23 => 'email'
+    ];
+
+    $actionName = $actionNameMap[$actionCode] ?? (string)$actionCode;
+
+    foreach ($moduleKeys as $moduleKey) {
+        if ($moduleKey === '') {
+            continue;
+        }
+
+        try {
+            if (hasPermission($moduleKey, $actionCode) || hasPermission($moduleKey, $actionName)) {
+                return true;
+            }
+        } catch (Throwable $e) {
+            // Continue with next key.
+        }
+    }
+
+    return false;
+}
+
+function svpPermissionAllowed(array $moduleKeys, $action): bool
 {
     if (function_exists('isPlatformOwner') && isPlatformOwner()) {
         return true;
     }
 
-    if (!function_exists('hasPermission')) {
-        return true;
-    }
-
-    $types = docTypes();
-    if (!isset($types[$documentType])) {
+    if (!$moduleKeys) {
         return false;
     }
 
-    $keys = array_merge([$types[$documentType]['permission_key']], $types[$documentType]['legacy_keys'] ?? []);
-    foreach ($keys as $key) {
-        if (hasPermission($key, 'print') || hasPermission($key, 'view')) {
-            return true;
-        }
+    if (svpRoleBaseRowsExist($moduleKeys)) {
+        return svpRoleBaseAllowed($moduleKeys, $action);
     }
 
-    return false;
+    return svpFallbackHasPermission($moduleKeys, $action);
+}
+
+function svpCanDocumentAction(int $documentType, $action): bool
+{
+    return svpPermissionAllowed(svpDocumentPermissionKeys($documentType), $action);
+}
+
+function svpCanPrint(int $documentType): bool
+{
+    /*
+     * Preview page uses action-specific document permissions.
+     */
+    return svpCanDocumentAction($documentType, 6);
+}
+
+function canViewDoc(int $documentType): bool
+{
+    return svpCanDocumentAction($documentType, 1) || svpCanDocumentAction($documentType, 2);
+}
+
+function canPrintDoc(int $documentType): bool
+{
+    return svpCanPrint($documentType);
 }
 
 function h($value): string
@@ -226,8 +512,11 @@ if (!$sale) {
 }
 
 $documentType = (int)($sale['document_type'] ?? 0);
-if (!canPrintDoc($documentType)) {
-    die('You do not have permission to print this document.');
+$canViewDocument = canViewDoc($documentType);
+$canPrintDocument = canPrintDoc($documentType);
+
+if (!$canViewDocument && !$canPrintDocument) {
+    die('You do not have permission to view this document.');
 }
 
 $docTypes = docTypes();
@@ -556,7 +845,9 @@ $page_title = $documentTitle . ' - ' . ($sale['sales_no'] ?? '');
 
 <div class="toolbar">
     <a href="<?= h(BASE_URL); ?>pages/sales.php?id=<?= (int)$saleId; ?>&mode=edit">Back</a>
-    <button type="button" onclick="window.open('<?= h($fpdfPrintUrl); ?>', '_blank')">Print</button>
+    <?php if ($canPrintDocument): ?>
+        <button type="button" onclick="window.open('<?= h($fpdfPrintUrl); ?>', '_blank')">Print</button>
+    <?php endif; ?>
 </div>
 
 <div class="invoice">

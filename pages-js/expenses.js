@@ -3,8 +3,17 @@ $(document).ready(function () {
 
     let searchTimer = null;
 
-    loadCategories();
-    loadExpenses();
+    let pageContext = {
+        can_view: false,
+        can_list: false,
+        can_add: false,
+        can_edit: false,
+        can_delete: false,
+        can_cancel: false,
+        can_export: false
+    };
+
+    loadPageContext();
 
     $('#refreshExpensesBtn, #filterExpensesBtn').on('click', loadExpenses);
     $('#expenseStatusFilter, #categoryFilter').on('change', loadExpenses);
@@ -15,6 +24,11 @@ $(document).ready(function () {
     });
 
     $(document).on('click', '.delete-expense-btn', function () {
+        if (!pageContext.can_delete) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         let expenseId = $(this).data('id');
         if (!confirm('Are you sure you want to delete this expense?')) return;
 
@@ -25,7 +39,7 @@ $(document).ready(function () {
             data: {
                 action: 'delete_expense',
                 expense_id: expenseId,
-                csrf_token: $('input[name="csrf_token"]').first().val()
+                csrf_token: getCsrfToken()
             },
             success: function (response) {
                 if (response.status === true) {
@@ -43,6 +57,11 @@ $(document).ready(function () {
     });
 
     $(document).on('click', '.cancel-expense-btn', function () {
+        if (!pageContext.can_cancel) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         let expenseId = $(this).data('id');
         if (!confirm('Are you sure you want to cancel this expense?')) return;
 
@@ -53,7 +72,7 @@ $(document).ready(function () {
             data: {
                 action: 'cancel_expense',
                 expense_id: expenseId,
-                csrf_token: $('input[name="csrf_token"]').first().val()
+                csrf_token: getCsrfToken()
             },
             success: function (response) {
                 if (response.status === true) {
@@ -70,7 +89,53 @@ $(document).ready(function () {
         });
     });
 
+    function loadPageContext() {
+        $.ajax({
+            url: window.BASE_URL + 'api/expenses.php',
+            type: 'GET',
+            dataType: 'json',
+            data: {
+                action: 'get_page_context'
+            },
+            success: function (response) {
+                if (response.status === true) {
+                    pageContext = response.data.context || pageContext;
+                    applyPageContext();
+                    loadCategories();
+                    loadExpenses();
+                } else {
+                    $('#expenseTableBody').html('<tr><td colspan="11" class="text-center text-danger">' + escapeHtml(response.message || 'Permission denied.') + '</td></tr>');
+                    $('#addExpenseBtn').addClass('d-none');
+                }
+            },
+            error: function (xhr) {
+                console.log(xhr.responseText);
+                $('#expenseTableBody').html('<tr><td colspan="11" class="text-center text-danger">Server error.</td></tr>');
+                $('#addExpenseBtn').addClass('d-none');
+            }
+        });
+    }
+
+    function applyPageContext() {
+        if (pageContext.can_add) {
+            $('#addExpenseBtn').removeClass('d-none');
+        } else {
+            $('#addExpenseBtn').addClass('d-none');
+        }
+
+        if (!pageContext.can_view && !pageContext.can_list) {
+            $('#filterExpensesBtn, #refreshExpensesBtn').prop('disabled', true);
+        } else {
+            $('#filterExpensesBtn, #refreshExpensesBtn').prop('disabled', false);
+        }
+    }
+
     function loadExpenses() {
+        if (!pageContext.can_view && !pageContext.can_list) {
+            $('#expenseTableBody').html('<tr><td colspan="11" class="text-center text-danger">Permission denied.</td></tr>');
+            return;
+        }
+
         $('#expenseTableBody').html('<tr><td colspan="11" class="text-center text-muted">Loading...</td></tr>');
 
         $.ajax({
@@ -108,6 +173,26 @@ $(document).ready(function () {
 
         let html = '';
         $.each(expenses, function (index, expense) {
+            let actionHtml = '';
+
+            if (expense.can_edit || pageContext.can_edit) {
+                actionHtml += `<a href="${window.BASE_URL}pages/expense-form.php?id=${expense.id}" class="btn btn-outline-primary" title="Edit"><i class="mdi mdi-pencil"></i></a>`;
+            }
+
+            if ((expense.can_cancel || pageContext.can_cancel) && parseInt(expense.status || 0) === 1) {
+                actionHtml += `<button type="button" class="btn btn-outline-warning cancel-expense-btn" data-id="${expense.id}" title="Cancel"><i class="mdi mdi-cancel"></i></button>`;
+            }
+
+            if (expense.can_delete || pageContext.can_delete) {
+                actionHtml += `<button type="button" class="btn btn-outline-danger delete-expense-btn" data-id="${expense.id}" title="Delete"><i class="mdi mdi-delete"></i></button>`;
+            }
+
+            if (actionHtml === '') {
+                actionHtml = '<span class="text-muted">No access</span>';
+            } else {
+                actionHtml = '<div class="btn-group btn-group-sm">' + actionHtml + '</div>';
+            }
+
             html += `
                 <tr>
                     <td>${index + 1}</td>
@@ -123,13 +208,7 @@ $(document).ready(function () {
                     <td><strong>₹${num(expense.total_amount)}</strong></td>
                     <td><small>${escapeHtml(expense.split_summary || '-')}</small></td>
                     <td>${statusBadge(expense.status)}</td>
-                    <td>
-                        <div class="btn-group btn-group-sm">
-                            <a href="${window.BASE_URL}pages/expense-form.php?id=${expense.id}" class="btn btn-outline-primary" title="Edit"><i class="mdi mdi-pencil"></i></a>
-                            <button type="button" class="btn btn-outline-warning cancel-expense-btn" data-id="${expense.id}" title="Cancel"><i class="mdi mdi-cancel"></i></button>
-                            <button type="button" class="btn btn-outline-danger delete-expense-btn" data-id="${expense.id}" title="Delete"><i class="mdi mdi-delete"></i></button>
-                        </div>
-                    </td>
+                    <td>${actionHtml}</td>
                 </tr>
             `;
         });
@@ -160,6 +239,10 @@ $(document).ready(function () {
         $('#activeExpensesCount').text(stats.active_expenses || 0);
         $('#cancelledExpensesCount').text(stats.cancelled_expenses || 0);
         $('#totalExpenseAmount').text(formatCurrency(stats.total_amount || 0));
+    }
+
+    function getCsrfToken() {
+        return $('input[name="csrf_token"]').first().val() || '';
     }
 
     function formatDate(date) {

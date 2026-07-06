@@ -21,10 +21,12 @@ $page_title = 'Expenses | Universal ERP';
 <div class="main-content">
 <div class="page-content"><div class="container-fluid">
 
+<?= csrfTokenInput(); ?>
+
 <div class="row"><div class="col-12">
 <div class="page-title-box d-flex align-items-center justify-content-between">
 <h4 class="mb-0">Expenses</h4>
-<a href="<?= BASE_URL; ?>pages/expense-form.php" class="btn btn-primary"><i class="mdi mdi-plus me-1"></i> Add Expense</a>
+<a href="<?= BASE_URL; ?>pages/expense-form.php" class="btn btn-primary d-none" id="addExpenseBtn"><i class="mdi mdi-plus me-1"></i> Add Expense</a>
 </div></div></div>
 
 <div class="row">

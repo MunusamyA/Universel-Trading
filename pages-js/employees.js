@@ -1,9 +1,22 @@
 $(document).ready(function () {
+
     $('#preloader').fadeOut('slow');
 
     let searchTimer = null;
-    loadRoles();
-    loadEmployees();
+
+    let pageContext = {
+        can_view: false,
+        can_list: false,
+        can_add: false,
+        can_edit: false,
+        can_delete: false,
+        page_title: 'Employees',
+        page_note: '',
+        add_button_label: 'Add Employee',
+        form_url: ''
+    };
+
+    loadPageContext();
 
     $('#refreshEmployeesBtn').on('click', loadEmployees);
     $('#employeeStatusFilter, #roleFilter').on('change', loadEmployees);
@@ -14,12 +27,19 @@ $(document).ready(function () {
     });
 
     $(document).on('click', '.delete-employee-btn', function () {
+        if (!pageContext.can_delete) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         let employeeId = $(this).data('id');
 
-        if (!confirm('Are you sure you want to delete this employee?')) return;
+        if (!confirm('Are you sure you want to delete this employee?')) {
+            return;
+        }
 
         $.ajax({
-            url: window.BASE_URL + 'api/employees.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'POST',
             dataType: 'json',
             data: {
@@ -42,11 +62,59 @@ $(document).ready(function () {
         });
     });
 
+    function loadPageContext() {
+        $.ajax({
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
+            type: 'GET',
+            dataType: 'json',
+            data: {
+                action: 'get_page_context'
+            },
+            success: function (response) {
+                if (response.status === true) {
+                    pageContext = response.data.context || pageContext;
+                    applyPageContext();
+                    loadRoles();
+                    loadEmployees();
+                } else {
+                    $('#employeeTableBody').html('<tr><td colspan="10" class="text-center text-danger">' + escapeHtml(response.message || 'Permission denied.') + '</td></tr>');
+                    $('#addEmployeeBtn').addClass('d-none');
+                }
+            },
+            error: function (xhr) {
+                console.log(xhr.responseText);
+                $('#employeeTableBody').html('<tr><td colspan="10" class="text-center text-danger">Server error.</td></tr>');
+                $('#addEmployeeBtn').addClass('d-none');
+            }
+        });
+    }
+
+    function applyPageContext() {
+        $('#pageTitleText').text(pageContext.page_title || 'Employees');
+        $('#pageNoteText').text(pageContext.page_note || '');
+        $('#addEmployeeBtnText').text(pageContext.add_button_label || 'Add Employee');
+
+        if (pageContext.form_url) {
+            $('#addEmployeeBtn').attr('href', pageContext.form_url);
+        }
+
+        if (pageContext.can_add) {
+            $('#addEmployeeBtn').removeClass('d-none');
+        } else {
+            $('#addEmployeeBtn').addClass('d-none');
+        }
+    }
+
     function loadEmployees() {
+        if (!pageContext.can_view && !pageContext.can_list) {
+            $('#employeeTableBody').html('<tr><td colspan="10" class="text-center text-danger">Permission denied.</td></tr>');
+            return;
+        }
+
         $('#employeeTableBody').html('<tr><td colspan="10" class="text-center text-muted">Loading...</td></tr>');
 
         $.ajax({
-            url: window.BASE_URL + 'api/employees.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
             data: {
@@ -60,7 +128,7 @@ $(document).ready(function () {
                     renderEmployeeRows(response.data.employees || []);
                     renderStats(response.data.stats || {});
                 } else {
-                    $('#employeeTableBody').html(`<tr><td colspan="10" class="text-center text-danger">${escapeHtml(response.message || 'Unable to load employees.')}</td></tr>`);
+                    $('#employeeTableBody').html('<tr><td colspan="10" class="text-center text-danger">' + escapeHtml(response.message || 'Unable to load employees.') + '</td></tr>');
                 }
             },
             error: function (xhr) {
@@ -79,32 +147,32 @@ $(document).ready(function () {
         let html = '';
 
         $.each(employees, function (index, employee) {
-            html += `
-                <tr>
-                    <td>${index + 1}</td>
-                    <td><strong>${escapeHtml(employee.employee_code || '-')}</strong></td>
-                    <td>${escapeHtml(employee.employee_name || '')}</td>
-                    <td>${escapeHtml(employee.username || '')}</td>
-                    <td>
-                        <div>${escapeHtml(employee.mobile || '-')}</div>
-                        <small class="text-muted">${escapeHtml(employee.email || '')}</small>
-                    </td>
-                    <td>${escapeHtml(employee.designation || '-')}</td>
-                    <td>${escapeHtml(employee.role_name || '-')}</td>
-                    <td>${currency(employee.salary)}</td>
-                    <td>${statusBadge(employee.status)}</td>
-                    <td>
-                        <div class="btn-group btn-group-sm">
-                            <a href="${window.BASE_URL}pages/employee-form.php?id=${employee.id}" class="btn btn-outline-primary" title="Edit">
-                                <i class="mdi mdi-pencil"></i>
-                            </a>
-                            <button type="button" class="btn btn-outline-danger delete-employee-btn" data-id="${employee.id}" title="Delete">
-                                <i class="mdi mdi-delete"></i>
-                            </button>
-                        </div>
-                    </td>
-                </tr>
-            `;
+            let actionHtml = '';
+
+            if (employee.can_edit) {
+                actionHtml += '<a href="' + window.BASE_URL + 'pages/employee-form.php?id=' + employee.id + '" class="btn btn-outline-primary btn-sm" title="Edit"><i class="mdi mdi-pencil"></i></a>';
+            }
+
+            if (employee.can_delete) {
+                actionHtml += '<button type="button" class="btn btn-outline-danger btn-sm delete-employee-btn ms-1" data-id="' + employee.id + '" title="Delete"><i class="mdi mdi-delete"></i></button>';
+            }
+
+            if (actionHtml === '') {
+                actionHtml = '<span class="text-muted">No access</span>';
+            }
+
+            html += '<tr>';
+            html += '<td>' + (index + 1) + '</td>';
+            html += '<td><strong>' + escapeHtml(employee.employee_code || '-') + '</strong></td>';
+            html += '<td>' + escapeHtml(employee.employee_name || '') + '</td>';
+            html += '<td>' + escapeHtml(employee.username || '') + '</td>';
+            html += '<td><div>' + escapeHtml(employee.mobile || '-') + '</div><small class="text-muted">' + escapeHtml(employee.email || '') + '</small></td>';
+            html += '<td>' + escapeHtml(employee.designation || '-') + '</td>';
+            html += '<td>' + escapeHtml(employee.role_name || '-') + '</td>';
+            html += '<td>' + currency(employee.salary) + '</td>';
+            html += '<td>' + statusBadge(employee.status) + '</td>';
+            html += '<td><div class="btn-group btn-group-sm">' + actionHtml + '</div></td>';
+            html += '</tr>';
         });
 
         $('#employeeTableBody').html(html);
@@ -112,20 +180,26 @@ $(document).ready(function () {
 
     function loadRoles() {
         $.ajax({
-            url: window.BASE_URL + 'api/employees.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
-            data: { action: 'get_roles' },
+            data: {
+                action: 'get_roles'
+            },
             success: function (response) {
                 let html = '<option value="0">All Roles</option>';
+
                 if (response.status === true) {
                     $.each(response.data.roles || [], function (_, role) {
-                        html += `<option value="${role.id}">${escapeHtml(role.role_name)}</option>`;
+                        html += '<option value="' + role.id + '">' + escapeHtml(role.role_name) + '</option>';
                     });
                 }
+
                 $('#roleFilter').html(html);
             },
-            error: function (xhr) { console.log(xhr.responseText); }
+            error: function (xhr) {
+                console.log(xhr.responseText);
+            }
         });
     }
 
@@ -136,26 +210,44 @@ $(document).ready(function () {
     }
 
     function statusBadge(status) {
-        return parseInt(status) === 1 ? '<span class="badge bg-success">Active</span>' : '<span class="badge bg-danger">Inactive</span>';
+        return parseInt(status) === 1
+            ? '<span class="badge bg-success">Active</span>'
+            : '<span class="badge bg-danger">Inactive</span>';
     }
 
     function currency(value) {
-        let n = parseFloat(value);
-        if (isNaN(n)) n = 0;
-        return '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        let numberValue = parseFloat(value);
+
+        if (isNaN(numberValue)) {
+            numberValue = 0;
+        }
+
+        return '₹' + numberValue.toLocaleString('en-IN', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
     }
 
     function showToastSafe(type, message) {
-        if (typeof showToast === 'function') showToast(type, message, 5000);
-        else alert(message);
+        if (typeof showToast === 'function') {
+            showToast(type, message, 5000);
+            return;
+        }
+
+        alert(message);
     }
 
     function handleError(response) {
-        if (response && response.redirect) { window.location.href = response.redirect; return; }
+        if (response && response.redirect) {
+            window.location.href = response.redirect;
+            return;
+        }
+
         showToastSafe('error', response && response.message ? response.message : 'Something went wrong.');
     }
 
     function escapeHtml(value) {
         return $('<div>').text(value === null || value === undefined ? '' : value).html();
     }
+
 });

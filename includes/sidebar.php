@@ -16,10 +16,6 @@ function sidebarUrl($url)
 
     $url = ltrim($url, '/');
 
-    if ($url === 'pages/dashboard.php' || $url === 'pages/index.php' || $url === 'pages/login.php') {
-        return BASE_URL . $url;
-    }
-
     if (strpos($url, 'pages/') === 0) {
         return BASE_URL . $url;
     }
@@ -36,6 +32,12 @@ function isActiveMenu($url, $currentPage)
     return basename($url) === $currentPage;
 }
 
+function sidebarAccessHasViewOrList($actions)
+{
+    $actions = parseAccessActions($actions);
+    return in_array(1, $actions, true) || in_array(2, $actions, true);
+}
+
 $menus = [];
 
 try {
@@ -43,9 +45,9 @@ try {
 
         $userType = $user['user_type'] ?? 'business_user';
         $roleId = (int)($user['role_id'] ?? 0);
+        $packageRoleId = (int)($user['parent_role_id'] ?? 0);
 
         if ($userType === 'platform_owner') {
-
             $stmt = $pdo->prepare("
                 SELECT
                     id AS menu_id,
@@ -58,6 +60,7 @@ try {
                 FROM sidebar_menus
                 WHERE is_sidebar = 1
                 AND status = 1
+                AND menu_for IN ('platform', 'both')
                 ORDER BY COALESCE(parent_id, 0), sort_order ASC, id ASC
             ");
 
@@ -73,62 +76,88 @@ try {
                 (int)($user['branch_status'] ?? 0) === 1 &&
                 (int)($user['role_status'] ?? 0) === 1
             ) {
-
-                $stmt = $pdo->prepare("
-                    SELECT DISTINCT
-                        sm.id AS menu_id,
-                        sm.parent_id,
-                        sm.menu_key,
-                        sm.menu_name,
-                        sm.menu_url,
-                        sm.icon_class,
-                        sm.sort_order
-                    FROM sidebar_menus sm
-                    INNER JOIN roles r
-                        ON r.id = :role_id
-                        AND r.status = 1
-                    LEFT JOIN role_menu_permissions rmp_direct
-                        ON rmp_direct.menu_id = sm.id
-                        AND rmp_direct.role_id = r.id
-                        AND rmp_direct.can_view = 1
-                        AND rmp_direct.status = 1
-                    LEFT JOIN role_menu_permissions rmp_package
-                        ON rmp_package.menu_id = sm.id
-                        AND rmp_package.role_id = r.parent_role_id
-                        AND rmp_package.can_view = 1
-                        AND rmp_package.status = 1
-                    WHERE sm.status = 1
-                    AND sm.is_sidebar = 1
-                    AND (
-                        rmp_direct.id IS NOT NULL
-                        OR rmp_package.id IS NOT NULL
-                        OR sm.id IN (
-                            SELECT child_sm.parent_id
-                            FROM sidebar_menus child_sm
-                            LEFT JOIN role_menu_permissions child_direct
-                                ON child_direct.menu_id = child_sm.id
-                                AND child_direct.role_id = r.id
-                                AND child_direct.can_view = 1
-                                AND child_direct.status = 1
-                            LEFT JOIN role_menu_permissions child_package
-                                ON child_package.menu_id = child_sm.id
-                                AND child_package.role_id = r.parent_role_id
-                                AND child_package.can_view = 1
-                                AND child_package.status = 1
-                            WHERE child_sm.parent_id IS NOT NULL
-                            AND child_sm.status = 1
-                            AND child_sm.is_sidebar = 1
-                            AND (
-                                child_direct.id IS NOT NULL
-                                OR child_package.id IS NOT NULL
-                            )
-                        )
-                    )
-                    ORDER BY COALESCE(sm.parent_id, 0), sm.sort_order ASC, sm.id ASC
+                $menuStmt = $pdo->prepare("
+                    SELECT
+                        id AS menu_id,
+                        parent_id,
+                        menu_key,
+                        menu_name,
+                        menu_url,
+                        icon_class,
+                        sort_order
+                    FROM sidebar_menus
+                    WHERE is_sidebar = 1
+                    AND status = 1
+                    AND menu_for IN ('customer', 'both')
+                    ORDER BY COALESCE(parent_id, 0), sort_order ASC, id ASC
                 ");
+                $menuStmt->execute();
+                $allMenus = $menuStmt->fetchAll(PDO::FETCH_ASSOC);
 
-                $stmt->execute([':role_id' => $roleId]);
-                $menus = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                $accessRoleId = 0;
+                $ownPermissionMode = roleHasOwnPermissionRows($roleId);
+
+                if ($ownPermissionMode) {
+                    $accessRoleId = $roleId;
+                } elseif ($packageRoleId > 0) {
+                    $accessRoleId = $packageRoleId;
+                }
+
+                $accessMap = [];
+
+                if ($accessRoleId > 0) {
+                    $accessStmt = $pdo->prepare("
+                        SELECT menu_id, access_actions, status
+                        FROM role_base_access
+                        WHERE role_id = :role_id
+                    ");
+
+                    $accessStmt->execute([
+                        ':role_id' => $accessRoleId
+                    ]);
+
+                    while ($accessRow = $accessStmt->fetch(PDO::FETCH_ASSOC)) {
+                        $accessMap[(int)$accessRow['menu_id']] = [
+                            'access_actions' => $accessRow['access_actions'] ?? '',
+                            'status' => (int)($accessRow['status'] ?? 0)
+                        ];
+                    }
+                }
+
+                $allowedMenuIds = [];
+
+                foreach ($allMenus as $menu) {
+                    $menuId = (int)$menu['menu_id'];
+
+                    if (!isset($accessMap[$menuId])) {
+                        continue;
+                    }
+
+                    if ((int)$accessMap[$menuId]['status'] !== 1) {
+                        continue;
+                    }
+
+                    if (sidebarAccessHasViewOrList($accessMap[$menuId]['access_actions'])) {
+                        $allowedMenuIds[$menuId] = true;
+                    }
+                }
+
+                foreach ($allMenus as $menu) {
+                    $menuId = (int)$menu['menu_id'];
+                    $parentId = (int)($menu['parent_id'] ?? 0);
+
+                    if ($parentId > 0 && isset($allowedMenuIds[$menuId])) {
+                        $allowedMenuIds[$parentId] = true;
+                    }
+                }
+
+                foreach ($allMenus as $menu) {
+                    $menuId = (int)$menu['menu_id'];
+
+                    if (isset($allowedMenuIds[$menuId])) {
+                        $menus[] = $menu;
+                    }
+                }
             }
         }
     }
@@ -159,6 +188,7 @@ foreach ($menus as $menu) {
                 </a>
             </li>
         <?php } else { ?>
+
             <?php foreach ($parentMenus as $parent) { ?>
                 <?php
                 $parentId = (int)$parent['menu_id'];
@@ -189,7 +219,7 @@ foreach ($menus as $menu) {
                     </a>
 
                     <?php if ($hasChild) { ?>
-                        <ul class="sub-menu" aria-expanded="<?= $childActive ? 'true' : 'false'; ?>">
+                        <ul class="sub-menu <?= $childActive ? 'mm-show' : ''; ?>" aria-expanded="<?= $childActive ? 'true' : 'false'; ?>">
                             <?php foreach ($childMenus[$parentId] as $child) { ?>
                                 <?php
                                 $childUrl = sidebarUrl($child['menu_url']);
@@ -206,6 +236,7 @@ foreach ($menus as $menu) {
                     <?php } ?>
                 </li>
             <?php } ?>
+
         <?php } ?>
     </ul>
 </div>

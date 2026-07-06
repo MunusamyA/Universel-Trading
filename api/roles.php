@@ -4,25 +4,26 @@ require_once BASE_PATH . 'includes/db.php';
 require_once BASE_PATH . 'includes/security.php';
 require_once BASE_PATH . 'includes/auth.php';
 
-/** @var PDO $pdo */
-
 secureSessionStart();
 header('Content-Type: application/json');
+
 requireApiLogin();
+
+/** @var PDO $pdo */
 
 $action = cleanInput($_POST['action'] ?? $_GET['action'] ?? '');
 
 switch ($action) {
+    case 'get_page_context':
+        getPageContext($pdo);
+        break;
+
     case 'list_roles':
         listRoles($pdo);
         break;
 
     case 'get_role':
         getRole($pdo);
-        break;
-
-    case 'get_permission_menus':
-        getPermissionMenus($pdo);
         break;
 
     case 'save_role':
@@ -35,785 +36,812 @@ switch ($action) {
         deleteRole($pdo);
         break;
 
+    case 'get_permission_menus':
+        getPermissionMenus($pdo);
+        break;
+
+    case 'get_menu_count':
+        getMenuCount($pdo);
+        break;
+
     default:
         jsonResponse(false, 'Invalid action.');
         break;
 }
 
-function getWorkingBusinessBranch(PDO $pdo)
+function rolesPageCan($actionCode)
+{
+    return hasPermission('roles', (int)$actionCode);
+}
+
+function getPageContext(PDO $pdo)
+{
+    if (!rolesPageCan(1)) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
+    $isPlatform = isPlatformOwner();
+
+    $context = [
+        'user_type' => currentUserType(),
+        'is_platform_owner' => $isPlatform,
+        'can_view' => rolesPageCan(1),
+        'can_add' => rolesPageCan(3),
+        'can_edit' => rolesPageCan(4),
+        'can_delete' => rolesPageCan(5),
+        'add_button_label' => $isPlatform ? 'Add Package Role' : 'Add Role',
+        'add_modal_title' => $isPlatform ? 'Add Package Role' : 'Add Role',
+        'edit_modal_title' => $isPlatform ? 'Edit Package Role' : 'Edit Role',
+        'page_note' => $isPlatform
+            ? 'Create package roles and control package permissions.'
+            : 'Create business roles inside your assigned package permission.',
+        'modal_note' => $isPlatform
+            ? 'Package Control: You control what menus/actions are available for this package.'
+            : 'Package Limited: You can create roles only within the package permission assigned during customer registration.',
+        'permission_source_note' => $isPlatform
+            ? 'Showing all actions from sidebar_menus.allowed_actions.'
+            : 'Showing only permissions allowed in your selected package.'
+    ];
+
+    jsonResponse(true, 'Page context loaded.', [
+        'context' => $context
+    ]);
+}
+
+function roleAccessScopeSql()
 {
     if (isPlatformOwner()) {
-        return ['business_id' => null, 'branch_id' => null];
+        return [
+            'sql' => " role_type = 1 AND business_id IS NULL AND branch_id IS NULL ",
+            'params' => []
+        ];
     }
 
     return [
-        'business_id' => currentBusinessId(),
-        'branch_id' => currentBranchId()
+        'sql' => " role_type = 2 AND business_id = :business_id AND branch_id = :branch_id ",
+        'params' => [
+            ':business_id' => currentBusinessId(),
+            ':branch_id' => currentBranchId()
+        ]
     ];
+}
+
+function businessPackageRoleIdForNewRole(PDO $pdo)
+{
+    $user = currentLiveUser();
+    $packageRoleId = (int)($user['parent_role_id'] ?? 0);
+
+    if ($packageRoleId <= 0) {
+        return 0;
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT id
+        FROM roles
+        WHERE id = :id
+        AND role_type = 1
+        AND business_id IS NULL
+        AND branch_id IS NULL
+        AND status = 1
+        LIMIT 1
+    ");
+
+    $stmt->execute([
+        ':id' => $packageRoleId
+    ]);
+
+    return $stmt->fetch(PDO::FETCH_ASSOC) ? $packageRoleId : 0;
 }
 
 function listRoles(PDO $pdo)
 {
-    if (isPlatformOwner()) {
-        $stmt = $pdo->prepare("
-            SELECT id, role_name, description, status, role_type, parent_role_id, is_locked
-            FROM roles
-            WHERE role_type = 1
-            AND business_id IS NULL
-            AND branch_id IS NULL
-            ORDER BY id DESC
-        ");
-        $stmt->execute();
-    } else {
-        $scope = getWorkingBusinessBranch($pdo);
-
-        $stmt = $pdo->prepare("
-            SELECT id, role_name, description, status, role_type, parent_role_id, is_locked
-            FROM roles
-            WHERE business_id = :business_id
-            AND branch_id = :branch_id
-            AND role_type = 2
-            ORDER BY id DESC
-        ");
-
-        $stmt->execute([
-            ':business_id' => $scope['business_id'],
-            ':branch_id' => $scope['branch_id']
-        ]);
+    if (!rolesPageCan(1)) {
+        jsonResponse(false, 'Permission denied.');
     }
 
-    jsonResponse(true, 'Roles loaded.', ['roles' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+    try {
+        $scope = roleAccessScopeSql();
+
+        $stmt = $pdo->prepare("
+            SELECT
+                id,
+                role_name,
+                description,
+                status,
+                is_locked,
+                role_type,
+                parent_role_id,
+                created_at
+            FROM roles
+            WHERE {$scope['sql']}
+            ORDER BY id ASC
+        ");
+
+        $stmt->execute($scope['params']);
+        $roles = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $canEdit = rolesPageCan(4);
+        $canDelete = rolesPageCan(5);
+
+        $stats = [
+            'total_roles' => count($roles),
+            'active_roles' => 0,
+            'inactive_roles' => 0
+        ];
+
+        foreach ($roles as &$role) {
+            if ((int)$role['status'] === 1) {
+                $stats['active_roles']++;
+            } else {
+                $stats['inactive_roles']++;
+            }
+
+            $isLocked = (int)($role['is_locked'] ?? 0) === 1;
+
+            $role['can_edit'] = (!$isLocked && $canEdit);
+            $role['can_delete'] = (!$isLocked && $canDelete);
+        }
+        unset($role);
+
+        jsonResponse(true, 'Roles loaded.', [
+            'roles' => $roles,
+            'stats' => $stats
+        ]);
+
+    } catch (Exception $e) {
+        jsonResponse(false, $e->getMessage() ?: 'Unable to load roles.');
+    }
 }
 
 function getRole(PDO $pdo)
 {
+    if (!rolesPageCan(4)) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
     $roleId = (int)($_GET['role_id'] ?? 0);
 
     if ($roleId <= 0) {
         jsonResponse(false, 'Invalid role.');
     }
 
-    if (isPlatformOwner()) {
-        $stmt = $pdo->prepare("
-            SELECT id, role_name, description, status, role_type, parent_role_id, is_locked
-            FROM roles
-            WHERE id = :role_id
-            LIMIT 1
-        ");
-        $stmt->execute([':role_id' => $roleId]);
-    } else {
-        $scope = getWorkingBusinessBranch($pdo);
+    try {
+        $scope = roleAccessScopeSql();
 
         $stmt = $pdo->prepare("
-            SELECT id, role_name, description, status, role_type, parent_role_id, is_locked
+            SELECT
+                id,
+                role_name,
+                description,
+                status,
+                is_locked,
+                role_type,
+                parent_role_id
             FROM roles
             WHERE id = :role_id
-            AND business_id = :business_id
-            AND branch_id = :branch_id
-            AND role_type = 2
+            AND {$scope['sql']}
             LIMIT 1
         ");
 
-        $stmt->execute([
-            ':role_id' => $roleId,
-            ':business_id' => $scope['business_id'],
-            ':branch_id' => $scope['branch_id']
-        ]);
-    }
+        $params = array_merge([':role_id' => $roleId], $scope['params']);
+        $stmt->execute($params);
 
-    $role = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    if (!$role) {
-        jsonResponse(false, 'Role not found.');
-    }
-
-    jsonResponse(true, 'Role loaded.', ['role' => $role]);
-}
-
-function getPermissionMenus(PDO $pdo)
-{
-    $roleId = (int)($_GET['role_id'] ?? 0);
-
-    /*
-        Locked branch roles are package based.
-        Do not show menu permission edit list for locked Branch Admin roles.
-    */
-    if ($roleId > 0) {
-        $role = getRoleRow($pdo, $roleId);
+        $role = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$role) {
             jsonResponse(false, 'Role not found.');
         }
 
-        if (!isPlatformOwner() && (int)($role['is_locked'] ?? 0) === 1) {
-            jsonResponse(true, 'This branch role is package controlled. Menu permissions are not editable.', [
-                'menus' => [],
-                'is_locked' => 1,
-                'package_controlled' => 1
-            ]);
+        if ((int)($role['is_locked'] ?? 0) === 1) {
+            jsonResponse(false, 'Locked role cannot be edited.');
         }
-    }
 
-    /*
-        Platform owner edits Basic / Premium / Gold package roles.
-        So show all active sidebar menus.
-    */
-    if (isPlatformOwner()) {
-        $stmt = $pdo->prepare("
-            SELECT
-                sm.id,
-                sm.parent_id,
-                sm.menu_key,
-                sm.menu_name,
-                sm.menu_url,
-                sm.icon_class,
-                sm.sort_order,
-
-                COALESCE(rmp.can_view, 0) AS can_view,
-                COALESCE(rmp.can_add, 0) AS can_add,
-                COALESCE(rmp.can_edit, 0) AS can_edit,
-                COALESCE(rmp.can_delete, 0) AS can_delete,
-                COALESCE(rmp.can_print, 0) AS can_print,
-                COALESCE(rmp.can_export, 0) AS can_export,
-                COALESCE(rmp.can_approve, 0) AS can_approve,
-                COALESCE(rmp.can_convert, 0) AS can_convert,
-                COALESCE(rmp.can_adjust, 0) AS can_adjust,
-                COALESCE(rmp.can_ship, 0) AS can_ship,
-                COALESCE(rmp.can_generate_invoice, 0) AS can_generate_invoice,
-
-                1 AS allowed_can_view,
-                1 AS allowed_can_add,
-                1 AS allowed_can_edit,
-                1 AS allowed_can_delete,
-                1 AS allowed_can_print,
-                1 AS allowed_can_export,
-                1 AS allowed_can_approve,
-                1 AS allowed_can_convert,
-                1 AS allowed_can_adjust,
-                1 AS allowed_can_ship,
-                1 AS allowed_can_generate_invoice
-
-            FROM sidebar_menus sm
-
-            LEFT JOIN role_menu_permissions rmp
-                ON rmp.menu_id = sm.id
-                AND rmp.role_id = :role_id
-                AND rmp.status = 1
-
-            WHERE sm.status = 1
-
-            ORDER BY
-                COALESCE(sm.parent_id, 0),
-                COALESCE(sm.sort_order, 9999) ASC,
-                sm.id ASC
-        ");
-
-        $stmt->execute([
-            ':role_id' => $roleId
+        jsonResponse(true, 'Role loaded.', [
+            'role' => $role
         ]);
 
-        jsonResponse(true, 'Menus loaded.', [
-            'menus' => $stmt->fetchAll(PDO::FETCH_ASSOC)
-        ]);
+    } catch (Exception $e) {
+        jsonResponse(false, $e->getMessage() ?: 'Unable to load role.');
     }
-
-    /*
-        Branch / business user Add Role modal:
-        Menus must be listed based on the branch package role.
-        Package role id is taken from current branch locked Branch Admin role / current user's parent_role_id.
-    */
-    $packageRoleId = getEffectivePackageRoleId($pdo);
-
-    if ($packageRoleId <= 0) {
-        jsonResponse(true, 'No package role assigned for this branch.', [
-            'menus' => [],
-            'package_role_id' => 0
-        ]);
-    }
-
-    $stmt = $pdo->prepare("
-        SELECT
-            sm.id,
-            sm.parent_id,
-            sm.menu_key,
-            sm.menu_name,
-            sm.menu_url,
-            sm.icon_class,
-            sm.sort_order,
-
-            COALESCE(rmp.can_view, 0) AS can_view,
-            COALESCE(rmp.can_add, 0) AS can_add,
-            COALESCE(rmp.can_edit, 0) AS can_edit,
-            COALESCE(rmp.can_delete, 0) AS can_delete,
-            COALESCE(rmp.can_print, 0) AS can_print,
-            COALESCE(rmp.can_export, 0) AS can_export,
-            COALESCE(rmp.can_approve, 0) AS can_approve,
-            COALESCE(rmp.can_convert, 0) AS can_convert,
-            COALESCE(rmp.can_adjust, 0) AS can_adjust,
-            COALESCE(rmp.can_ship, 0) AS can_ship,
-            COALESCE(rmp.can_generate_invoice, 0) AS can_generate_invoice,
-
-            CASE
-                WHEN package_perm.id IS NOT NULL THEN COALESCE(package_perm.can_view, 0)
-                WHEN parent_package_perm.id IS NOT NULL THEN 1
-                ELSE 0
-            END AS allowed_can_view,
-
-            CASE WHEN package_perm.id IS NOT NULL THEN COALESCE(package_perm.can_add, 0) ELSE 0 END AS allowed_can_add,
-            CASE WHEN package_perm.id IS NOT NULL THEN COALESCE(package_perm.can_edit, 0) ELSE 0 END AS allowed_can_edit,
-            CASE WHEN package_perm.id IS NOT NULL THEN COALESCE(package_perm.can_delete, 0) ELSE 0 END AS allowed_can_delete,
-            CASE WHEN package_perm.id IS NOT NULL THEN COALESCE(package_perm.can_print, 0) ELSE 0 END AS allowed_can_print,
-            CASE WHEN package_perm.id IS NOT NULL THEN COALESCE(package_perm.can_export, 0) ELSE 0 END AS allowed_can_export,
-            CASE WHEN package_perm.id IS NOT NULL THEN COALESCE(package_perm.can_approve, 0) ELSE 0 END AS allowed_can_approve,
-            CASE WHEN package_perm.id IS NOT NULL THEN COALESCE(package_perm.can_convert, 0) ELSE 0 END AS allowed_can_convert,
-            CASE WHEN package_perm.id IS NOT NULL THEN COALESCE(package_perm.can_adjust, 0) ELSE 0 END AS allowed_can_adjust,
-            CASE WHEN package_perm.id IS NOT NULL THEN COALESCE(package_perm.can_ship, 0) ELSE 0 END AS allowed_can_ship,
-            CASE WHEN package_perm.id IS NOT NULL THEN COALESCE(package_perm.can_generate_invoice, 0) ELSE 0 END AS allowed_can_generate_invoice
-
-        FROM sidebar_menus sm
-
-        LEFT JOIN role_menu_permissions package_perm
-            ON package_perm.menu_id = sm.id
-            AND package_perm.role_id = :package_role_id
-            AND package_perm.status = 1
-
-        LEFT JOIN sidebar_menus child_sm
-            ON child_sm.parent_id = sm.id
-            AND child_sm.status = 1
-
-        LEFT JOIN role_menu_permissions parent_package_perm
-            ON parent_package_perm.menu_id = child_sm.id
-            AND parent_package_perm.role_id = :package_role_id_parent
-            AND parent_package_perm.status = 1
-
-        LEFT JOIN role_menu_permissions rmp
-            ON rmp.menu_id = sm.id
-            AND rmp.role_id = :role_id
-            AND rmp.status = 1
-
-        WHERE sm.status = 1
-        AND (
-            package_perm.id IS NOT NULL
-            OR parent_package_perm.id IS NOT NULL
-        )
-
-        GROUP BY sm.id
-
-        ORDER BY
-            COALESCE(sm.parent_id, 0),
-            COALESCE(sm.sort_order, 9999) ASC,
-            sm.id ASC
-    ");
-
-    $stmt->execute([
-        ':package_role_id' => $packageRoleId,
-        ':package_role_id_parent' => $packageRoleId,
-        ':role_id' => $roleId
-    ]);
-
-    jsonResponse(true, 'Menus loaded.', [
-        'menus' => $stmt->fetchAll(PDO::FETCH_ASSOC),
-        'package_role_id' => $packageRoleId
-    ]);
 }
 
 function saveRole(PDO $pdo)
 {
-    $scope = getWorkingBusinessBranch($pdo);
-    $businessId = $scope['business_id'];
-    $branchId = $scope['branch_id'];
-
     $roleId = (int)($_POST['role_id'] ?? 0);
+
+    if ($roleId > 0 && !rolesPageCan(4)) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
+    if ($roleId <= 0 && !rolesPageCan(3)) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
     $roleName = cleanInput($_POST['role_name'] ?? '');
     $description = cleanInput($_POST['description'] ?? '');
     $status = (int)($_POST['status'] ?? 1);
     $permissions = $_POST['permissions'] ?? [];
-    $menuIds = $_POST['menu_ids'] ?? [];
 
     if ($roleName === '') {
         jsonResponse(false, 'Please enter role name.');
     }
 
-    if (!in_array($status, [1, 2], true)) {
-        $status = 1;
-    }
+    $status = $status === 1 ? 1 : 2;
 
     try {
         $pdo->beginTransaction();
 
         if ($roleId > 0) {
-            if (!isPlatformOwner() && isLockedRole($pdo, $roleId)) {
-                jsonResponse(false, 'This role is package controlled. You cannot edit this role.');
+            $scope = roleAccessScopeSql();
+
+            $checkStmt = $pdo->prepare("
+                SELECT id, is_locked
+                FROM roles
+                WHERE id = :role_id
+                AND {$scope['sql']}
+                LIMIT 1
+            ");
+
+            $params = array_merge([':role_id' => $roleId], $scope['params']);
+            $checkStmt->execute($params);
+
+            $existing = $checkStmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$existing) {
+                throw new Exception('Role not found.');
             }
 
-            if (!isPlatformOwner() && !hasPermission('roles', 'edit')) {
-                jsonResponse(false, 'You do not have edit permission.');
+            if ((int)($existing['is_locked'] ?? 0) === 1) {
+                throw new Exception('Locked role cannot be edited.');
             }
 
-            updateRole($pdo, $businessId, $branchId, $roleId, $roleName, $description, $status);
+            $updateStmt = $pdo->prepare("
+                UPDATE roles
+                SET
+                    role_name = :role_name,
+                    description = :description,
+                    status = :status
+                WHERE id = :role_id
+                LIMIT 1
+            ");
+
+            $updateStmt->execute([
+                ':role_name' => $roleName,
+                ':description' => $description,
+                ':status' => $status,
+                ':role_id' => $roleId
+            ]);
+
         } else {
-            if (!isPlatformOwner() && !hasPermission('roles', 'add')) {
-                jsonResponse(false, 'You do not have add permission.');
+            if (isPlatformOwner()) {
+                $insertStmt = $pdo->prepare("
+                    INSERT INTO roles
+                    (
+                        business_id,
+                        branch_id,
+                        role_type,
+                        parent_role_id,
+                        role_name,
+                        description,
+                        status,
+                        is_locked
+                    )
+                    VALUES
+                    (
+                        NULL,
+                        NULL,
+                        1,
+                        NULL,
+                        :role_name,
+                        :description,
+                        :status,
+                        0
+                    )
+                ");
+
+                $insertStmt->execute([
+                    ':role_name' => $roleName,
+                    ':description' => $description,
+                    ':status' => $status
+                ]);
+
+            } else {
+                $packageRoleId = businessPackageRoleIdForNewRole($pdo);
+
+                if ($packageRoleId <= 0) {
+                    throw new Exception('Package role not found for this business. Please check customer registration package.');
+                }
+
+                $insertStmt = $pdo->prepare("
+                    INSERT INTO roles
+                    (
+                        business_id,
+                        branch_id,
+                        role_type,
+                        parent_role_id,
+                        role_name,
+                        description,
+                        status,
+                        is_locked
+                    )
+                    VALUES
+                    (
+                        :business_id,
+                        :branch_id,
+                        2,
+                        :parent_role_id,
+                        :role_name,
+                        :description,
+                        :status,
+                        0
+                    )
+                ");
+
+                $insertStmt->execute([
+                    ':business_id' => currentBusinessId(),
+                    ':branch_id' => currentBranchId(),
+                    ':parent_role_id' => $packageRoleId,
+                    ':role_name' => $roleName,
+                    ':description' => $description,
+                    ':status' => $status
+                ]);
             }
 
-            $roleId = createRole($pdo, $businessId, $branchId, $roleName, $description, $status);
+            $roleId = (int)$pdo->lastInsertId();
         }
 
-        validatePermissionsWithinCurrentUserAccess($pdo, $menuIds, $permissions);
-        deleteRolePermissions($pdo, $roleId);
-        saveRolePermissions($pdo, $roleId, $menuIds, $permissions);
+        saveRolePermissions($pdo, $roleId, $permissions);
 
         $pdo->commit();
-        jsonResponse(true, 'Role saved successfully.', ['role_id' => $roleId]);
+
+        jsonResponse(true, 'Role saved successfully.', [
+            'role_id' => $roleId
+        ]);
 
     } catch (Exception $e) {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
-        jsonResponse(false, $e->getMessage() ?: 'Role save failed.');
+
+        jsonResponse(false, $e->getMessage() ?: 'Unable to save role.');
     }
-}
-
-function createRole(PDO $pdo, $businessId, $branchId, $roleName, $description, $status)
-{
-    if (isPlatformOwner()) {
-        $duplicateStmt = $pdo->prepare("
-            SELECT id
-            FROM roles
-            WHERE role_type = 1
-            AND business_id IS NULL
-            AND branch_id IS NULL
-            AND role_name = :role_name
-            LIMIT 1
-        ");
-        $duplicateStmt->execute([':role_name' => $roleName]);
-
-        if ($duplicateStmt->fetch(PDO::FETCH_ASSOC)) {
-            throw new Exception('Package role name already exists.');
-        }
-
-        $stmt = $pdo->prepare("
-            INSERT INTO roles
-            (business_id, branch_id, role_type, parent_role_id, role_name, description, status, is_locked)
-            VALUES
-            (NULL, NULL, 1, NULL, :role_name, :description, :status, 0)
-        ");
-        $stmt->execute([
-            ':role_name' => $roleName,
-            ':description' => $description,
-            ':status' => $status
-        ]);
-
-        return (int)$pdo->lastInsertId();
-    }
-
-    $duplicateStmt = $pdo->prepare("
-        SELECT id
-        FROM roles
-        WHERE business_id = :business_id
-        AND branch_id = :branch_id
-        AND role_type = 2
-        AND role_name = :role_name
-        LIMIT 1
-    ");
-    $duplicateStmt->execute([
-        ':business_id' => $businessId,
-        ':branch_id' => $branchId,
-        ':role_name' => $roleName
-    ]);
-
-    if ($duplicateStmt->fetch(PDO::FETCH_ASSOC)) {
-        throw new Exception('Role name already exists.');
-    }
-
-    $stmt = $pdo->prepare("
-        INSERT INTO roles
-        (business_id, branch_id, role_type, parent_role_id, role_name, description, status, is_locked)
-        VALUES
-        (:business_id, :branch_id, 2, NULL, :role_name, :description, :status, 0)
-    ");
-    $stmt->execute([
-        ':business_id' => $businessId,
-        ':branch_id' => $branchId,
-        ':role_name' => $roleName,
-        ':description' => $description,
-        ':status' => $status
-    ]);
-
-    return (int)$pdo->lastInsertId();
-}
-
-function updateRole(PDO $pdo, $businessId, $branchId, $roleId, $roleName, $description, $status)
-{
-    if (isPlatformOwner()) {
-        $checkStmt = $pdo->prepare("SELECT id FROM roles WHERE id = :role_id LIMIT 1");
-        $checkStmt->execute([':role_id' => $roleId]);
-
-        if (!$checkStmt->fetch(PDO::FETCH_ASSOC)) {
-            throw new Exception('Role not found.');
-        }
-
-        $stmt = $pdo->prepare("
-            UPDATE roles
-            SET role_name = :role_name,
-                description = :description,
-                status = :status
-            WHERE id = :role_id
-        ");
-        $stmt->execute([
-            ':role_name' => $roleName,
-            ':description' => $description,
-            ':status' => $status,
-            ':role_id' => $roleId
-        ]);
-        return;
-    }
-
-    $checkStmt = $pdo->prepare("
-        SELECT id
-        FROM roles
-        WHERE id = :role_id
-        AND business_id = :business_id
-        AND branch_id = :branch_id
-        AND role_type = 2
-        LIMIT 1
-    ");
-    $checkStmt->execute([
-        ':role_id' => $roleId,
-        ':business_id' => $businessId,
-        ':branch_id' => $branchId
-    ]);
-
-    if (!$checkStmt->fetch(PDO::FETCH_ASSOC)) {
-        throw new Exception('Role not found.');
-    }
-
-    $stmt = $pdo->prepare("
-        UPDATE roles
-        SET role_name = :role_name,
-            description = :description,
-            status = :status
-        WHERE id = :role_id
-        AND business_id = :business_id
-        AND branch_id = :branch_id
-    ");
-    $stmt->execute([
-        ':role_name' => $roleName,
-        ':description' => $description,
-        ':status' => $status,
-        ':role_id' => $roleId,
-        ':business_id' => $businessId,
-        ':branch_id' => $branchId
-    ]);
 }
 
 function deleteRole(PDO $pdo)
 {
+    if (!rolesPageCan(5)) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
     $roleId = (int)($_POST['role_id'] ?? 0);
 
     if ($roleId <= 0) {
         jsonResponse(false, 'Invalid role.');
     }
 
-    if (!isPlatformOwner() && isLockedRole($pdo, $roleId)) {
-        jsonResponse(false, 'This role is package controlled. You cannot delete this role.');
-    }
-
-    if (!isPlatformOwner() && !hasPermission('roles', 'delete')) {
-        jsonResponse(false, 'You do not have delete permission.');
-    }
-
-    $scope = getWorkingBusinessBranch($pdo);
-
     try {
+        $scope = roleAccessScopeSql();
+
+        $checkStmt = $pdo->prepare("
+            SELECT id, is_locked
+            FROM roles
+            WHERE id = :role_id
+            AND {$scope['sql']}
+            LIMIT 1
+        ");
+
+        $params = array_merge([':role_id' => $roleId], $scope['params']);
+        $checkStmt->execute($params);
+
+        $role = $checkStmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$role) {
+            jsonResponse(false, 'Role not found.');
+        }
+
+        if ((int)$role['is_locked'] === 1) {
+            jsonResponse(false, 'Locked role cannot be deleted.');
+        }
+
+        $userStmt = $pdo->prepare("
+            SELECT COUNT(*) AS total
+            FROM users
+            WHERE role_id = :role_id
+        ");
+
+        $userStmt->execute([
+            ':role_id' => $roleId
+        ]);
+
+        $userRow = $userStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ((int)($userRow['total'] ?? 0) > 0) {
+            jsonResponse(false, 'This role is used by users. Cannot delete.');
+        }
+
         $pdo->beginTransaction();
 
-        $checkUserStmt = $pdo->prepare("SELECT id FROM users WHERE role_id = :role_id LIMIT 1");
-        $checkUserStmt->execute([':role_id' => $roleId]);
+        $deleteAccess = $pdo->prepare("
+            DELETE FROM role_base_access
+            WHERE role_id = :role_id
+        ");
 
-        if ($checkUserStmt->fetch(PDO::FETCH_ASSOC)) {
-            throw new Exception('This role is assigned to users. Cannot delete.');
-        }
+        $deleteAccess->execute([
+            ':role_id' => $roleId
+        ]);
 
-        deleteRolePermissions($pdo, $roleId);
+        $deleteRole = $pdo->prepare("
+            DELETE FROM roles
+            WHERE id = :role_id
+            LIMIT 1
+        ");
 
-        if (isPlatformOwner()) {
-            $usedStmt = $pdo->prepare("SELECT id FROM roles WHERE parent_role_id = :role_id LIMIT 1");
-            $usedStmt->execute([':role_id' => $roleId]);
-
-            if ($usedStmt->fetch(PDO::FETCH_ASSOC)) {
-                throw new Exception('This package role is assigned to customers. Cannot delete.');
-            }
-
-            $deleteRoleStmt = $pdo->prepare("DELETE FROM roles WHERE id = :role_id");
-            $deleteRoleStmt->execute([':role_id' => $roleId]);
-        } else {
-            $deleteRoleStmt = $pdo->prepare("
-                DELETE FROM roles
-                WHERE id = :role_id
-                AND business_id = :business_id
-                AND branch_id = :branch_id
-                AND role_type = 2
-            ");
-            $deleteRoleStmt->execute([
-                ':role_id' => $roleId,
-                ':business_id' => $scope['business_id'],
-                ':branch_id' => $scope['branch_id']
-            ]);
-        }
+        $deleteRole->execute([
+            ':role_id' => $roleId
+        ]);
 
         $pdo->commit();
+
         jsonResponse(true, 'Role deleted successfully.');
 
     } catch (Exception $e) {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
-        jsonResponse(false, $e->getMessage() ?: 'Role delete failed.');
+
+        jsonResponse(false, $e->getMessage() ?: 'Unable to delete role.');
     }
 }
 
-function deleteRolePermissions(PDO $pdo, $roleId)
+function getPermissionMenus(PDO $pdo)
 {
-    $stmt = $pdo->prepare("DELETE FROM role_menu_permissions WHERE role_id = :role_id");
-    $stmt->execute([':role_id' => $roleId]);
+    $roleId = (int)($_GET['role_id'] ?? 0);
+
+    if ($roleId > 0 && !rolesPageCan(4)) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
+    if ($roleId <= 0 && !rolesPageCan(3)) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
+    try {
+        if (isPlatformOwner()) {
+            if ($roleId > 0) {
+                $stmt = $pdo->prepare("
+                    SELECT
+                        sm.id,
+                        sm.parent_id,
+                        sm.menu_key,
+                        sm.menu_name,
+                        sm.menu_url,
+                        sm.allowed_actions,
+                        sm.sort_order,
+                        rba.access_actions
+                    FROM sidebar_menus sm
+                    LEFT JOIN role_base_access rba
+                        ON rba.menu_id = sm.id
+                        AND rba.role_id = :role_id
+                        AND rba.status = 1
+                    WHERE sm.status = 1
+                    AND sm.menu_for IN ('customer', 'both')
+                    ORDER BY COALESCE(sm.parent_id, 0), sm.sort_order ASC, sm.id ASC
+                ");
+
+                $stmt->execute([
+                    ':role_id' => $roleId
+                ]);
+
+            } else {
+                $stmt = $pdo->prepare("
+                    SELECT
+                        sm.id,
+                        sm.parent_id,
+                        sm.menu_key,
+                        sm.menu_name,
+                        sm.menu_url,
+                        sm.allowed_actions,
+                        sm.sort_order,
+                        '' AS access_actions
+                    FROM sidebar_menus sm
+                    WHERE sm.status = 1
+                    AND sm.menu_for IN ('customer', 'both')
+                    ORDER BY COALESCE(sm.parent_id, 0), sm.sort_order ASC, sm.id ASC
+                ");
+
+                $stmt->execute();
+            }
+
+            $menus = [];
+
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                $row['allowed_action_codes'] = parseAccessActions($row['allowed_actions'] ?? '');
+                $row['selected_action_codes'] = parseAccessActions($row['access_actions'] ?? '');
+                $menus[] = $row;
+            }
+
+            jsonResponse(true, 'Permission menus loaded.', [
+                'menus' => $menus
+            ]);
+        }
+
+        $packageRoleId = businessPackageRoleIdForNewRole($pdo);
+
+        
+
+        if ($packageRoleId <= 0) {
+            jsonResponse(false, 'Package role not found for this business.');
+        }
+
+        if ($roleId > 0) {
+            $stmt = $pdo->prepare("
+                SELECT
+                    sm.id,
+                    sm.parent_id,
+                    sm.menu_key,
+                    sm.menu_name,
+                    sm.menu_url,
+                    package_access.access_actions AS allowed_actions,
+                    sm.sort_order,
+                    business_access.access_actions
+                FROM sidebar_menus sm
+                INNER JOIN role_base_access package_access
+                    ON package_access.menu_id = sm.id
+                    AND package_access.role_id = :package_role_id
+                    AND package_access.status = 1
+                    AND package_access.access_actions <> ''
+                LEFT JOIN role_base_access business_access
+                    ON business_access.menu_id = sm.id
+                    AND business_access.role_id = :role_id
+                    AND business_access.status = 1
+                WHERE sm.status = 1
+                AND sm.menu_for IN ('customer', 'both')
+                ORDER BY COALESCE(sm.parent_id, 0), sm.sort_order ASC, sm.id ASC
+            ");
+
+            $stmt->execute([
+                ':package_role_id' => $packageRoleId,
+                ':role_id' => $roleId
+            ]);
+
+        } else {
+            $stmt = $pdo->prepare("
+                SELECT
+                    sm.id,
+                    sm.parent_id,
+                    sm.menu_key,
+                    sm.menu_name,
+                    sm.menu_url,
+                    package_access.access_actions AS allowed_actions,
+                    sm.sort_order,
+                    '' AS access_actions
+                FROM sidebar_menus sm
+                INNER JOIN role_base_access package_access
+                    ON package_access.menu_id = sm.id
+                    AND package_access.role_id = :package_role_id
+                    AND package_access.status = 1
+                    AND package_access.access_actions <> ''
+                WHERE sm.status = 1
+                AND sm.menu_for IN ('customer', 'both')
+                ORDER BY COALESCE(sm.parent_id, 0), sm.sort_order ASC, sm.id ASC
+            ");
+
+            $stmt->execute([
+                ':package_role_id' => $packageRoleId
+            ]);
+        }
+
+        $menus = [];
+
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $row['allowed_action_codes'] = parseAccessActions($row['allowed_actions'] ?? '');
+            $row['selected_action_codes'] = parseAccessActions($row['access_actions'] ?? '');
+            $menus[] = $row;
+        }
+
+        jsonResponse(true, 'Package limited permission menus loaded.', [
+            'menus' => $menus
+        ]);
+
+    } catch (Exception $e) {
+        jsonResponse(false, $e->getMessage() ?: 'Unable to load permission menus.');
+    }
 }
 
-function saveRolePermissions(PDO $pdo, $roleId, $menuIds, $permissions)
+function getMenuCount(PDO $pdo)
 {
-    if (empty($menuIds)) {
+    if (!rolesPageCan(1)) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
+    try {
+        if (isPlatformOwner()) {
+            $stmt = $pdo->prepare("
+                SELECT COUNT(*) AS total
+                FROM sidebar_menus
+                WHERE status = 1
+                AND is_sidebar = 1
+            ");
+
+            $stmt->execute();
+
+        } else {
+            $packageRoleId = businessPackageRoleIdForNewRole($pdo);
+
+            $stmt = $pdo->prepare("
+                SELECT COUNT(*) AS total
+                FROM sidebar_menus sm
+                INNER JOIN role_base_access package_access
+                    ON package_access.menu_id = sm.id
+                    AND package_access.role_id = :package_role_id
+                    AND package_access.status = 1
+                    AND package_access.access_actions <> ''
+                WHERE sm.status = 1
+                AND sm.is_sidebar = 1
+                AND sm.menu_for IN ('customer', 'both')
+            ");
+
+            $stmt->execute([
+                ':package_role_id' => $packageRoleId
+            ]);
+        }
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        jsonResponse(true, 'Menu count loaded.', [
+            'menu_count' => (int)($row['total'] ?? 0)
+        ]);
+
+    } catch (Exception $e) {
+        jsonResponse(false, 'Unable to load menu count.');
+    }
+}
+
+function saveRolePermissions(PDO $pdo, $roleId, $permissions)
+{
+    $roleId = (int)$roleId;
+
+    if ($roleId <= 0) {
         return;
     }
 
-    $stmt = $pdo->prepare("
-        INSERT INTO role_menu_permissions
-        (role_id, menu_id, can_view, can_add, can_edit, can_delete, can_print, can_export, can_approve, can_convert, can_adjust, can_ship, can_generate_invoice, status)
-        VALUES
-        (:role_id, :menu_id, :can_view, :can_add, :can_edit, :can_delete, :can_print, :can_export, :can_approve, :can_convert, :can_adjust, :can_ship, :can_generate_invoice, 1)
+    if (!is_array($permissions)) {
+        $permissions = [];
+    }
+
+    $existingStmt = $pdo->prepare("
+        SELECT menu_id
+        FROM role_base_access
+        WHERE role_id = :role_id
     ");
 
-    foreach ($menuIds as $menuId) {
-        $menuId = (int)$menuId;
-        $p = $permissions[$menuId] ?? [];
+    $existingStmt->execute([
+        ':role_id' => $roleId
+    ]);
 
-        $canView = isset($p['can_view']) ? 1 : 0;
-        $canAdd = isset($p['can_add']) ? 1 : 0;
-        $canEdit = isset($p['can_edit']) ? 1 : 0;
-        $canDelete = isset($p['can_delete']) ? 1 : 0;
-        $canPrint = isset($p['can_print']) ? 1 : 0;
-        $canExport = isset($p['can_export']) ? 1 : 0;
-        $canApprove = isset($p['can_approve']) ? 1 : 0;
-        $canConvert = isset($p['can_convert']) ? 1 : 0;
-        $canAdjust = isset($p['can_adjust']) ? 1 : 0;
-        $canShip = isset($p['can_ship']) ? 1 : 0;
-        $canGenerateInvoice = isset($p['can_generate_invoice']) ? 1 : 0;
+    $existingMenuIds = [];
 
-        if ($canAdd || $canEdit || $canDelete || $canPrint || $canExport || $canApprove || $canConvert || $canAdjust || $canShip || $canGenerateInvoice) {
-            $canView = 1;
+    while ($row = $existingStmt->fetch(PDO::FETCH_ASSOC)) {
+        $existingMenuIds[] = (int)$row['menu_id'];
+    }
+
+    if (isPlatformOwner()) {
+        $allowedStmt = $pdo->prepare("
+            SELECT id, allowed_actions
+            FROM sidebar_menus
+            WHERE id = :menu_id
+            AND status = 1
+            AND menu_for IN ('customer', 'both')
+            LIMIT 1
+        ");
+    } else {
+        $packageRoleId = businessPackageRoleIdForNewRole($pdo);
+
+        if ($packageRoleId <= 0) {
+            throw new Exception('Package role not found for this business.');
         }
 
-        if (!$canView && !$canAdd && !$canEdit && !$canDelete && !$canPrint && !$canExport && !$canApprove && !$canConvert && !$canAdjust && !$canShip && !$canGenerateInvoice) {
+        $allowedStmt = $pdo->prepare("
+            SELECT
+                sm.id,
+                package_access.access_actions AS allowed_actions
+            FROM sidebar_menus sm
+            INNER JOIN role_base_access package_access
+                ON package_access.menu_id = sm.id
+                AND package_access.role_id = :package_role_id
+                AND package_access.status = 1
+                AND package_access.access_actions <> ''
+            WHERE sm.id = :menu_id
+            AND sm.status = 1
+            AND sm.menu_for IN ('customer', 'both')
+            LIMIT 1
+        ");
+    }
+
+    $upsertStmt = $pdo->prepare("
+        INSERT INTO role_base_access
+        (
+            role_id,
+            menu_id,
+            access_actions,
+            status
+        )
+        VALUES
+        (
+            :role_id,
+            :menu_id,
+            :access_actions,
+            1
+        )
+        ON DUPLICATE KEY UPDATE
+            access_actions = VALUES(access_actions),
+            status = 1,
+            updated_at = NOW()
+    ");
+
+    $selectedMenuIds = [];
+
+    foreach ($permissions as $menuId => $actions) {
+        $menuId = (int)$menuId;
+
+        if ($menuId <= 0) {
             continue;
         }
 
-        $stmt->execute([
+        if (isPlatformOwner()) {
+            $allowedStmt->execute([
+                ':menu_id' => $menuId
+            ]);
+        } else {
+            $allowedStmt->execute([
+                ':package_role_id' => $packageRoleId,
+                ':menu_id' => $menuId
+            ]);
+        }
+
+        $menu = $allowedStmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$menu) {
+            continue;
+        }
+
+        $allowedActions = parseAccessActions($menu['allowed_actions'] ?? '');
+        $selectedActions = parseAccessActions($actions);
+
+        $finalActions = array_values(array_intersect($selectedActions, $allowedActions));
+        sort($finalActions, SORT_NUMERIC);
+
+        if (empty($finalActions)) {
+            continue;
+        }
+
+        $accessActions = implode(',', $finalActions);
+
+        $upsertStmt->execute([
             ':role_id' => $roleId,
             ':menu_id' => $menuId,
-            ':can_view' => $canView,
-            ':can_add' => $canAdd,
-            ':can_edit' => $canEdit,
-            ':can_delete' => $canDelete,
-            ':can_print' => $canPrint,
-            ':can_export' => $canExport,
-            ':can_approve' => $canApprove,
-            ':can_convert' => $canConvert,
-            ':can_adjust' => $canAdjust,
-            ':can_ship' => $canShip,
-            ':can_generate_invoice' => $canGenerateInvoice
+            ':access_actions' => $accessActions
         ]);
-    }
-}
 
-function validatePermissionsWithinCurrentUserAccess(PDO $pdo, $menuIds, $permissions)
-{
-    if (isPlatformOwner() || empty($menuIds)) {
-        return;
+        $selectedMenuIds[] = $menuId;
     }
 
-    $packageRoleId = getEffectivePackageRoleId($pdo);
+    $uncheckedMenuIds = array_values(array_diff($existingMenuIds, $selectedMenuIds));
 
-    if ($packageRoleId <= 0) {
-        jsonResponse(false, 'Package role not assigned for this branch.');
-    }
+    if (!empty($uncheckedMenuIds)) {
+        $placeholders = implode(',', array_fill(0, count($uncheckedMenuIds), '?'));
 
-    $stmt = $pdo->prepare("
-        SELECT
-            sm.id AS menu_id,
-            COALESCE(package.can_view, 0) AS can_view,
-            COALESCE(package.can_add, 0) AS can_add,
-            COALESCE(package.can_edit, 0) AS can_edit,
-            COALESCE(package.can_delete, 0) AS can_delete,
-            COALESCE(package.can_print, 0) AS can_print,
-            COALESCE(package.can_export, 0) AS can_export,
-            COALESCE(package.can_approve, 0) AS can_approve,
-            COALESCE(package.can_convert, 0) AS can_convert,
-            COALESCE(package.can_adjust, 0) AS can_adjust,
-            COALESCE(package.can_ship, 0) AS can_ship,
-            COALESCE(package.can_generate_invoice, 0) AS can_generate_invoice
-        FROM sidebar_menus sm
-        INNER JOIN role_menu_permissions package
-            ON package.menu_id = sm.id
-            AND package.role_id = :package_role_id
-            AND package.status = 1
-        WHERE sm.status = 1
-    ");
-
-    $stmt->execute([
-        ':package_role_id' => $packageRoleId
-    ]);
-
-    $allowedRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    $allowed = [];
-
-    foreach ($allowedRows as $row) {
-        $allowed[(int)$row['menu_id']] = $row;
-    }
-
-    $fields = [
-        'can_view',
-        'can_add',
-        'can_edit',
-        'can_delete',
-        'can_print',
-        'can_export',
-        'can_approve',
-        'can_convert',
-        'can_adjust',
-        'can_ship',
-        'can_generate_invoice'
-    ];
-
-    foreach ($menuIds as $menuId) {
-        $menuId = (int)$menuId;
-        $posted = $permissions[$menuId] ?? [];
-
-        foreach ($fields as $field) {
-            $requested = isset($posted[$field]) ? 1 : 0;
-
-            if ($requested === 1) {
-                if (!isset($allowed[$menuId]) || (int)$allowed[$menuId][$field] !== 1) {
-                    $menuName = getMenuNameById($pdo, $menuId);
-                    jsonResponse(false, 'Package access not allowed for ' . $menuName . ' - ' . $field . '. Enable this permission in the package role first.');
-                }
-            }
-        }
-    }
-}
-
-
-function isLockedRole(PDO $pdo, $roleId)
-{
-    $stmt = $pdo->prepare("SELECT is_locked FROM roles WHERE id = :role_id LIMIT 1");
-    $stmt->execute([':role_id' => $roleId]);
-    $role = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    return $role && (int)$role['is_locked'] === 1;
-}
-
-function getEffectivePackageRoleId(PDO $pdo)
-{
-    /*
-        For branch based roles page:
-        Menu permission list must come from the selected branch package.
-
-        Priority:
-        1. Current logged-in role parent_role_id.
-        2. Locked Branch Admin role for current business + current branch.
-
-        Note:
-        Branch Admin-created staff roles must keep parent_role_id NULL.
-        Package is always resolved from locked Branch Admin role.
-    */
-
-    $currentRoleId = currentRoleId();
-
-    if ($currentRoleId > 0) {
-        $stmt = $pdo->prepare("
-            SELECT parent_role_id
-            FROM roles
-            WHERE id = :role_id
-            AND status = 1
-            LIMIT 1
+        $disableStmt = $pdo->prepare("
+            UPDATE role_base_access
+            SET
+                access_actions = '',
+                status = 2,
+                updated_at = NOW()
+            WHERE role_id = ?
+            AND menu_id IN ($placeholders)
         ");
 
-        $stmt->execute([
-            ':role_id' => $currentRoleId
-        ]);
-
-        $role = $stmt->fetch(PDO::FETCH_ASSOC);
-        $parentRoleId = (int)($role['parent_role_id'] ?? 0);
-
-        if ($parentRoleId > 0) {
-            return $parentRoleId;
-        }
+        $params = array_merge([$roleId], $uncheckedMenuIds);
+        $disableStmt->execute($params);
     }
-
-    $businessId = currentBusinessId();
-    $branchId = currentBranchId();
-
-    if ($businessId > 0 && $branchId > 0) {
-        $stmt = $pdo->prepare("
-            SELECT parent_role_id
-            FROM roles
-            WHERE business_id = :business_id
-            AND branch_id = :branch_id
-            AND role_type = 2
-            AND is_locked = 1
-            AND parent_role_id IS NOT NULL
-            AND parent_role_id > 0
-            AND status = 1
-            ORDER BY id ASC
-            LIMIT 1
-        ");
-
-        $stmt->execute([
-            ':business_id' => $businessId,
-            ':branch_id' => $branchId
-        ]);
-
-        $role = $stmt->fetch(PDO::FETCH_ASSOC);
-        $parentRoleId = (int)($role['parent_role_id'] ?? 0);
-
-        if ($parentRoleId > 0) {
-            return $parentRoleId;
-        }
-
-    }
-
-    return 0;
-}
-
-function getCurrentPackageRoleId(PDO $pdo)
-{
-    return getEffectivePackageRoleId($pdo);
-}
-
-
-function getMenuNameById(PDO $pdo, $menuId)
-{
-    $stmt = $pdo->prepare("SELECT menu_name FROM sidebar_menus WHERE id = :menu_id LIMIT 1");
-    $stmt->execute([':menu_id' => (int)$menuId]);
-    $name = $stmt->fetchColumn();
-
-    return $name ? $name : ('Menu #' . (int)$menuId);
-}
-
-
-function getRoleRow(PDO $pdo, $roleId)
-{
-    $stmt = $pdo->prepare("SELECT * FROM roles WHERE id = :role_id LIMIT 1");
-    $stmt->execute([':role_id' => $roleId]);
-
-    return $stmt->fetch(PDO::FETCH_ASSOC);
 }

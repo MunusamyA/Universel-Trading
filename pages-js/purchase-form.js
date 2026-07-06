@@ -9,17 +9,15 @@ $(document).ready(function () {
     let paymentModes = [];
     let purchasePaymentSplits = [];
 
-    loadSuppliers();
-    loadProducts();
-    loadHsnCodes();
-    loadProductMasters();
-    loadPurchasePaymentModes();
+    let pageContext = {
+        can_add: false,
+        can_edit: false,
+        add_form_title: 'Add Purchase',
+        edit_form_title: 'Edit Purchase',
+        list_url: ''
+    };
 
-    if (purchaseId > 0) {
-        loadPurchase(purchaseId);
-    } else {
-        $('#batch_no').val(generateHeaderBatchNo());
-    }
+    loadPageContext();
 
     $('#productSearchInput').on('focus click', function () {
         showProductSuggestions($(this).val());
@@ -52,11 +50,23 @@ $(document).ready(function () {
 
     $('#hsnForm').on('submit', function (e) {
         e.preventDefault();
+
+        if (!pageContext.can_add) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         saveHsnCode();
     });
 
     $('#quickProductForm').on('submit', function (e) {
         e.preventDefault();
+
+        if (!pageContext.can_add) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         saveQuickProduct();
     });
 
@@ -169,6 +179,18 @@ $(document).ready(function () {
     $('#purchaseForm').on('submit', function (e) {
         e.preventDefault();
 
+        let currentPurchaseId = parseInt($('#purchase_id').val() || 0);
+
+        if (currentPurchaseId > 0 && !pageContext.can_edit) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
+        if (currentPurchaseId <= 0 && !pageContext.can_add) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         if ($('#supplier_id').val() === '') {
             return warn('Please select supplier.', '#supplier_id');
         }
@@ -216,7 +238,7 @@ $(document).ready(function () {
         $('#savePurchaseBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Saving...');
 
         $.ajax({
-            url: window.BASE_URL + 'api/purchases.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'POST',
             dataType: 'json',
             data: $('#purchaseForm').serialize() + '&action=save_purchase',
@@ -242,9 +264,83 @@ $(document).ready(function () {
     });
 
 
+    function loadPageContext() {
+        $.ajax({
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
+            type: 'GET',
+            dataType: 'json',
+            data: {
+                action: 'get_page_context'
+            },
+            success: function (response) {
+                if (response.status === true) {
+                    pageContext = response.data.context || pageContext;
+                    applyPageContext();
+
+                    loadSuppliers();
+                    loadProducts();
+                    loadHsnCodes();
+                    loadProductMasters();
+                    loadPurchasePaymentModes();
+
+                    if (purchaseId > 0) {
+                        loadPurchase(purchaseId);
+                    } else {
+                        $('#batch_no').val(generateHeaderBatchNo());
+                    }
+                } else {
+                    showToastSafe('error', response.message || 'Permission denied.');
+                    disablePurchaseForm();
+                }
+            },
+            error: function (xhr) {
+                console.log(xhr.responseText);
+                showToastSafe('error', 'Server error.');
+                disablePurchaseForm();
+            }
+        });
+    }
+
+    function applyPageContext() {
+        if (pageContext.list_url) {
+            $('#backPurchasesBtn').attr('href', pageContext.list_url);
+        }
+
+        if (purchaseId > 0) {
+            $('#purchasePageTitle').text(pageContext.edit_form_title || 'Edit Purchase');
+
+            if (!pageContext.can_edit) {
+                showToastSafe('error', 'Permission denied.');
+                disablePurchaseForm();
+            }
+        } else {
+            $('#purchasePageTitle').text(pageContext.add_form_title || 'Add Purchase');
+
+            if (!pageContext.can_add) {
+                showToastSafe('error', 'Permission denied.');
+                disablePurchaseForm();
+            }
+        }
+
+        if (pageContext.can_add) {
+            $('#quickProductBtn').removeClass('d-none');
+            $('.quick-hsn-btn').removeClass('d-none');
+        } else {
+            $('#quickProductBtn').addClass('d-none');
+            $('.quick-hsn-btn').addClass('d-none');
+        }
+    }
+
+    function disablePurchaseForm() {
+        $('#purchaseForm :input').prop('disabled', true);
+        $('#savePurchaseBtn').prop('disabled', true);
+        $('#quickProductBtn').addClass('d-none');
+        $('.quick-hsn-btn').addClass('d-none');
+    }
+
     function loadPurchasePaymentModes() {
         $.ajax({
-            url: window.BASE_URL + 'api/purchases.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
             data: { action: 'get_payment_modes' },
@@ -386,7 +482,7 @@ $(document).ready(function () {
 
     function loadSuppliers(selectedId) {
         $.ajax({
-            url: window.BASE_URL + 'api/purchases.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
             data: { action: 'get_suppliers' },
@@ -410,7 +506,7 @@ $(document).ready(function () {
 
     function loadProducts(selectedProductId, callback) {
         $.ajax({
-            url: window.BASE_URL + 'api/purchases.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
             data: { action: 'get_products' },
@@ -437,7 +533,7 @@ $(document).ready(function () {
 
     function loadProductMasters() {
         $.ajax({
-            url: window.BASE_URL + 'api/purchases.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
             data: { action: 'get_product_masters' },
@@ -512,10 +608,15 @@ $(document).ready(function () {
 
 
     function saveQuickProduct() {
+        if (!pageContext.can_add) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         $('#saveQuickProductBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Saving...');
 
         $.ajax({
-            url: window.BASE_URL + 'api/purchases.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'POST',
             dataType: 'json',
             data: $('#quickProductForm').serialize(),
@@ -659,7 +760,7 @@ $(document).ready(function () {
 
     function loadHsnCodes(selectedId) {
         $.ajax({
-            url: window.BASE_URL + 'api/purchases.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
             data: { action: 'get_hsn_codes' },
@@ -690,10 +791,15 @@ $(document).ready(function () {
     }
 
     function saveHsnCode() {
+        if (!pageContext.can_add) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         $('#saveHsnBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Saving...');
 
         $.ajax({
-            url: window.BASE_URL + 'api/purchases.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'POST',
             dataType: 'json',
             data: $('#hsnForm').serialize(),
@@ -1147,7 +1253,7 @@ $(document).ready(function () {
 
     function loadPurchase(purchaseId) {
         $.ajax({
-            url: window.BASE_URL + 'api/purchases.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
             data: {

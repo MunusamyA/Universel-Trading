@@ -9,33 +9,505 @@ header('Content-Type: application/json');
 requireApiLogin();
 
 /** @var PDO $pdo */
-$action = cleanInput($_GET['action'] ?? $_POST['action'] ?? '');
-if ($action !== 'list') { jsonResponse(false, 'Invalid action.'); }
 
-if (function_exists('hasPermission') && !(function_exists('isPlatformOwner') && isPlatformOwner())) {
-    $ok = false;
-    foreach (['reports','all_reports','sales','purchases','expenses','products','stock'] as $p) {
-        if (hasPermission($p, 'view')) { $ok = true; break; }
-    }
-    if (!$ok) { jsonResponse(false, 'Permission denied.'); }
+$action = cleanInput($_GET['action'] ?? $_POST['action'] ?? '');
+
+switch ($action) {
+    case 'get_context':
+        getAllReportsContext($pdo);
+        break;
+
+    case 'list':
+        listAllReportData($pdo);
+        break;
+
+    default:
+        jsonResponse(false, 'Invalid action.');
 }
 
-$businessId = (int)currentBusinessId();
-$branchId = (int)currentBranchId();
-if ($businessId <= 0 || $branchId <= 0) { jsonResponse(false, 'Invalid business or branch session.'); }
+function rptActionCode($action)
+{
+    if (is_numeric($action)) {
+        return (int)$action;
+    }
 
-$reportKey = cleanInput($_GET['report_key'] ?? 'sales_summary');
-$fromDate = rptDate($_GET['from_date'] ?? date('Y-m-01')) ?: date('Y-m-01');
-$toDate = rptDate($_GET['to_date'] ?? date('Y-m-d')) ?: date('Y-m-d');
-$search = trim((string)($_GET['search'] ?? ''));
-if ($fromDate > $toDate) { jsonResponse(false, 'From date cannot be greater than To date.'); }
+    $map = [
+        'view' => 1,
+        'list' => 2,
+        'add' => 3,
+        'create' => 3,
+        'edit' => 4,
+        'delete' => 5,
+        'print' => 6,
+        'export' => 7,
+        'download' => 21,
+        'generate_report' => 31,
+        'report' => 31
+    ];
 
-try {
-    $data = runReport($pdo, $businessId, $branchId, $reportKey, $fromDate, $toDate, $search);
-    $data['filters'] = ['report_key'=>$reportKey,'from_date'=>$fromDate,'to_date'=>$toDate,'search'=>$search];
-    jsonResponse(true, 'Report loaded.', $data);
-} catch (Throwable $e) {
-    jsonResponse(false, $e->getMessage());
+    $key = strtolower(trim((string)$action));
+
+    return $map[$key] ?? 1;
+}
+
+function rptActionName($actionCode)
+{
+    $map = [
+        1 => 'view',
+        2 => 'list',
+        3 => 'add',
+        4 => 'edit',
+        5 => 'delete',
+        6 => 'print',
+        7 => 'export',
+        21 => 'download',
+        31 => 'generate_report'
+    ];
+
+    return $map[(int)$actionCode] ?? 'view';
+}
+
+function allReportsPermissionKeys()
+{
+    return ['all_reports', 'all-reports', 'reports'];
+}
+
+function rptCurrentRoleIds()
+{
+    static $roleIds = null;
+
+    if ($roleIds !== null) {
+        return $roleIds;
+    }
+
+    global $pdo;
+
+    $roleIds = [];
+
+    if (function_exists('currentRoleId')) {
+        $roleId = (int)currentRoleId();
+        if ($roleId > 0) {
+            $roleIds[] = $roleId;
+        }
+    }
+
+    foreach (['role_id', 'current_role_id', 'user_role_id'] as $sessionKey) {
+        if (!empty($_SESSION[$sessionKey])) {
+            $roleId = (int)$_SESSION[$sessionKey];
+            if ($roleId > 0) {
+                $roleIds[] = $roleId;
+            }
+        }
+    }
+
+    if (function_exists('currentUserId')) {
+        $userId = (int)currentUserId();
+
+        if ($userId > 0 && isset($pdo) && $pdo instanceof PDO) {
+            try {
+                $stmt = $pdo->prepare("SELECT role_id FROM users WHERE id = :id LIMIT 1");
+                $stmt->execute([':id' => $userId]);
+                $dbRoleId = (int)$stmt->fetchColumn();
+
+                if ($dbRoleId > 0) {
+                    $roleIds[] = $dbRoleId;
+                }
+            } catch (Throwable $e) {
+                // Ignore fallback errors.
+            }
+        }
+    }
+
+    $roleIds = array_values(array_unique(array_filter(array_map('intval', $roleIds))));
+
+    /*
+     * Include parent package role also.
+     */
+    if ($roleIds && isset($pdo) && $pdo instanceof PDO) {
+        try {
+            $holders = [];
+            $params = [];
+
+            foreach ($roleIds as $index => $roleId) {
+                $key = ':role_' . $index;
+                $holders[] = $key;
+                $params[$key] = $roleId;
+            }
+
+            $stmt = $pdo->prepare("
+                SELECT parent_role_id
+                FROM roles
+                WHERE id IN (" . implode(',', $holders) . ")
+                AND parent_role_id IS NOT NULL
+                AND parent_role_id > 0
+            ");
+            $stmt->execute($params);
+
+            foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $parentRoleId) {
+                $parentRoleId = (int)$parentRoleId;
+                if ($parentRoleId > 0) {
+                    $roleIds[] = $parentRoleId;
+                }
+            }
+        } catch (Throwable $e) {
+            // Ignore parent role lookup errors.
+        }
+    }
+
+    return array_values(array_unique(array_filter(array_map('intval', $roleIds))));
+}
+
+function rptRoleBaseMenuRowsExist($moduleKeys)
+{
+    global $pdo;
+
+    if (!isset($pdo) || !($pdo instanceof PDO)) {
+        return false;
+    }
+
+    if (!is_array($moduleKeys)) {
+        $moduleKeys = [$moduleKeys];
+    }
+
+    $moduleKeys = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $moduleKeys)))));
+    $roleIds = rptCurrentRoleIds();
+
+    if (!$moduleKeys || !$roleIds) {
+        return false;
+    }
+
+    try {
+        $keyHolders = [];
+        $roleHolders = [];
+        $params = [];
+
+        foreach ($moduleKeys as $index => $moduleKey) {
+            $key = ':rpt_menu_key_' . $index;
+            $keyHolders[] = $key;
+            $params[$key] = $moduleKey;
+        }
+
+        foreach ($roleIds as $index => $roleId) {
+            $key = ':rpt_role_id_' . $index;
+            $roleHolders[] = $key;
+            $params[$key] = $roleId;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT 1
+            FROM role_base_access rba
+            INNER JOIN sidebar_menus sm ON sm.id = rba.menu_id
+            WHERE rba.role_id IN (" . implode(',', $roleHolders) . ")
+            AND sm.menu_key IN (" . implode(',', $keyHolders) . ")
+            LIMIT 1
+        ");
+        $stmt->execute($params);
+
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function rptRoleBasePermissionAllowed($moduleKeys, $action)
+{
+    global $pdo;
+
+    if (!isset($pdo) || !($pdo instanceof PDO)) {
+        return false;
+    }
+
+    if (!is_array($moduleKeys)) {
+        $moduleKeys = [$moduleKeys];
+    }
+
+    $moduleKeys = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $moduleKeys)))));
+    $roleIds = rptCurrentRoleIds();
+    $actionCode = rptActionCode($action);
+
+    if (!$moduleKeys || !$roleIds) {
+        return false;
+    }
+
+    try {
+        $keyHolders = [];
+        $roleHolders = [];
+        $params = [
+            ':action_code' => (string)$actionCode
+        ];
+
+        foreach ($moduleKeys as $index => $moduleKey) {
+            $key = ':rpt_allowed_menu_key_' . $index;
+            $keyHolders[] = $key;
+            $params[$key] = $moduleKey;
+        }
+
+        foreach ($roleIds as $index => $roleId) {
+            $key = ':rpt_allowed_role_id_' . $index;
+            $roleHolders[] = $key;
+            $params[$key] = $roleId;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT 1
+            FROM role_base_access rba
+            INNER JOIN sidebar_menus sm ON sm.id = rba.menu_id
+            WHERE rba.status = 1
+            AND sm.status = 1
+            AND rba.role_id IN (" . implode(',', $roleHolders) . ")
+            AND sm.menu_key IN (" . implode(',', $keyHolders) . ")
+            AND FIND_IN_SET(:action_code, REPLACE(COALESCE(rba.access_actions, ''), ' ', '')) > 0
+            LIMIT 1
+        ");
+        $stmt->execute($params);
+
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function rptHasPermissionFallback($moduleKeys, $action)
+{
+    if (!function_exists('hasPermission')) {
+        return false;
+    }
+
+    if (!is_array($moduleKeys)) {
+        $moduleKeys = [$moduleKeys];
+    }
+
+    $actionCode = rptActionCode($action);
+    $actionName = rptActionName($actionCode);
+
+    foreach ($moduleKeys as $moduleKey) {
+        if ($moduleKey === '') {
+            continue;
+        }
+
+        try {
+            if (hasPermission($moduleKey, $actionCode) || hasPermission($moduleKey, $actionName)) {
+                return true;
+            }
+        } catch (Throwable $e) {
+            // Continue with next key.
+        }
+    }
+
+    return false;
+}
+
+function rptCan($moduleKeys, $action = 1)
+{
+    if (function_exists('isPlatformOwner') && isPlatformOwner()) {
+        return true;
+    }
+
+    if (!is_array($moduleKeys)) {
+        $moduleKeys = [$moduleKeys];
+    }
+
+    if (rptRoleBaseMenuRowsExist($moduleKeys)) {
+        return rptRoleBasePermissionAllowed($moduleKeys, $action);
+    }
+
+    return rptHasPermissionFallback($moduleKeys, $action);
+}
+
+function reportDefinitions()
+{
+    return [
+        ['group' => 'Sales', 'key' => 'sales_summary', 'title' => 'Sales Summary', 'icon' => 'mdi-chart-bar'],
+        ['group' => 'Sales', 'key' => 'sales_detailed', 'title' => 'Sales Detailed', 'icon' => 'mdi-file-document'],
+        ['group' => 'Sales', 'key' => 'customer_wise_sales', 'title' => 'Customer-wise Sales', 'icon' => 'mdi-account-cash'],
+        ['group' => 'Sales', 'key' => 'product_wise_sales', 'title' => 'Product-wise Sales', 'icon' => 'mdi-package-variant'],
+        ['group' => 'Sales', 'key' => 'sales_due', 'title' => 'Sales Due', 'icon' => 'mdi-calendar-alert'],
+        ['group' => 'Sales', 'key' => 'customer_payment', 'title' => 'Customer Payment', 'icon' => 'mdi-cash-plus'],
+
+        ['group' => 'Purchase', 'key' => 'purchase_summary', 'title' => 'Purchase Summary', 'icon' => 'mdi-chart-bar'],
+        ['group' => 'Purchase', 'key' => 'purchase_detailed', 'title' => 'Purchase Detailed', 'icon' => 'mdi-file-document'],
+        ['group' => 'Purchase', 'key' => 'supplier_wise_purchase', 'title' => 'Supplier-wise Purchase', 'icon' => 'mdi-truck'],
+        ['group' => 'Purchase', 'key' => 'product_wise_purchase', 'title' => 'Product-wise Purchase', 'icon' => 'mdi-package-down'],
+        ['group' => 'Purchase', 'key' => 'purchase_due', 'title' => 'Purchase Due', 'icon' => 'mdi-calendar-alert'],
+        ['group' => 'Purchase', 'key' => 'supplier_payment', 'title' => 'Supplier Payment', 'icon' => 'mdi-cash-minus'],
+
+        ['group' => 'Expense', 'key' => 'expense_summary', 'title' => 'Expense Summary', 'icon' => 'mdi-chart-pie'],
+        ['group' => 'Expense', 'key' => 'expense_detailed', 'title' => 'Expense Detailed', 'icon' => 'mdi-receipt'],
+        ['group' => 'Expense', 'key' => 'payment_mode_expense', 'title' => 'Payment Mode-wise Expense', 'icon' => 'mdi-bank'],
+
+        ['group' => 'Outstanding', 'key' => 'customer_outstanding', 'title' => 'Customer Outstanding', 'icon' => 'mdi-account-alert'],
+        ['group' => 'Outstanding', 'key' => 'supplier_outstanding', 'title' => 'Supplier Outstanding', 'icon' => 'mdi-truck-alert'],
+        ['group' => 'Outstanding', 'key' => 'customer_ageing', 'title' => 'Customer Ageing', 'icon' => 'mdi-timer-sand'],
+        ['group' => 'Outstanding', 'key' => 'supplier_ageing', 'title' => 'Supplier Ageing', 'icon' => 'mdi-timer-sand'],
+
+        ['group' => 'Stock', 'key' => 'current_stock', 'title' => 'Current Stock', 'icon' => 'mdi-warehouse'],
+        ['group' => 'Stock', 'key' => 'low_stock', 'title' => 'Low Stock', 'icon' => 'mdi-alert-box'],
+        ['group' => 'Stock', 'key' => 'batch_stock', 'title' => 'Batch-wise Stock', 'icon' => 'mdi-barcode'],
+        ['group' => 'Stock', 'key' => 'stock_movement', 'title' => 'Stock Movement', 'icon' => 'mdi-swap-horizontal'],
+        ['group' => 'Stock', 'key' => 'stock_valuation', 'title' => 'Stock Valuation', 'icon' => 'mdi-currency-inr'],
+
+        ['group' => 'Profit', 'key' => 'gross_profit', 'title' => 'Gross Profit', 'icon' => 'mdi-trending-up'],
+        ['group' => 'Profit', 'key' => 'net_profit', 'title' => 'Net Profit', 'icon' => 'mdi-finance'],
+        ['group' => 'Profit', 'key' => 'product_profit', 'title' => 'Product Profit', 'icon' => 'mdi-package-variant-closed'],
+
+        ['group' => 'GST', 'key' => 'sales_gst', 'title' => 'Sales GST', 'icon' => 'mdi-percent'],
+        ['group' => 'GST', 'key' => 'purchase_gst', 'title' => 'Purchase GST', 'icon' => 'mdi-percent'],
+        ['group' => 'GST', 'key' => 'gst_summary', 'title' => 'GST Summary', 'icon' => 'mdi-calculator'],
+
+        ['group' => 'Master', 'key' => 'customer_master', 'title' => 'Customer Master', 'icon' => 'mdi-account-group'],
+        ['group' => 'Master', 'key' => 'supplier_master', 'title' => 'Supplier Master', 'icon' => 'mdi-truck'],
+        ['group' => 'Master', 'key' => 'product_master', 'title' => 'Product Master', 'icon' => 'mdi-package'],
+
+        ['group' => 'Admin', 'key' => 'user_wise_sales', 'title' => 'User-wise Sales', 'icon' => 'mdi-account-star'],
+        ['group' => 'Admin', 'key' => 'cancelled_deleted', 'title' => 'Cancelled / Deleted', 'icon' => 'mdi-delete-alert']
+    ];
+}
+
+function reportGroupForKey($reportKey)
+{
+    foreach (reportDefinitions() as $report) {
+        if ($report['key'] === $reportKey) {
+            return $report['group'];
+        }
+    }
+
+    return '';
+}
+
+function reportModuleKeysForGroup($group)
+{
+    switch ($group) {
+        case 'Sales':
+            return ['sales', 'sales_list', 'all_sales_list', 'sales_bill_list', 'final_invoice_list', 'customer_payments'];
+        case 'Purchase':
+            return ['purchases', 'purchase', 'purchase_list', 'purchase_form', 'supplier_payments'];
+        case 'Expense':
+            return ['expenses', 'expense', 'expense_list'];
+        case 'Outstanding':
+            return ['customers', 'suppliers', 'sales', 'purchases'];
+        case 'Stock':
+            return ['products', 'stock', 'inventory_stock', 'current_stock'];
+        case 'Profit':
+            return ['sales', 'expenses', 'reports'];
+        case 'GST':
+            return ['sales', 'purchases', 'reports'];
+        case 'Master':
+            return ['customers', 'suppliers', 'products'];
+        case 'Admin':
+            return ['users', 'audit_logs', 'reports'];
+        default:
+            return [];
+    }
+}
+
+function canUseAllReportsMenu($action = 1)
+{
+    return rptCan(allReportsPermissionKeys(), $action);
+}
+
+function canAccessReportKey($reportKey)
+{
+    if (function_exists('isPlatformOwner') && isPlatformOwner()) {
+        return true;
+    }
+
+    if (canUseAllReportsMenu(1) || canUseAllReportsMenu(2) || canUseAllReportsMenu(31)) {
+        return true;
+    }
+
+    $group = reportGroupForKey($reportKey);
+    $moduleKeys = reportModuleKeysForGroup($group);
+
+    return rptCan($moduleKeys, 1) || rptCan($moduleKeys, 2);
+}
+
+function allowedReports()
+{
+    $allowed = [];
+
+    foreach (reportDefinitions() as $report) {
+        if (canAccessReportKey($report['key'])) {
+            $allowed[] = $report;
+        }
+    }
+
+    return $allowed;
+}
+
+function requireAllReportsAccess()
+{
+    if (function_exists('isPlatformOwner') && isPlatformOwner()) {
+        return;
+    }
+
+    if (canUseAllReportsMenu(1) || canUseAllReportsMenu(2) || canUseAllReportsMenu(31) || count(allowedReports()) > 0) {
+        return;
+    }
+
+    jsonResponse(false, 'Permission denied.');
+}
+
+function getAllReportsContext(PDO $pdo)
+{
+    requireAllReportsAccess();
+
+    $allowedReports = allowedReports();
+
+    jsonResponse(true, 'All reports context loaded.', [
+        'context' => [
+            'can_view' => canUseAllReportsMenu(1) || canUseAllReportsMenu(2) || count($allowedReports) > 0,
+            'can_print' => canUseAllReportsMenu(6),
+            'can_export' => canUseAllReportsMenu(7),
+            'can_generate_report' => canUseAllReportsMenu(31),
+            'reports' => $allowedReports,
+            'default_report' => $allowedReports[0]['key'] ?? ''
+        ]
+    ]);
+}
+
+function listAllReportData(PDO $pdo)
+{
+    requireAllReportsAccess();
+
+    $businessId = (int)currentBusinessId();
+    $branchId = (int)currentBranchId();
+
+    if ($businessId <= 0 || $branchId <= 0) {
+        jsonResponse(false, 'Invalid business or branch session.');
+    }
+
+    $reportKey = cleanInput($_GET['report_key'] ?? 'sales_summary');
+
+    if (!canAccessReportKey($reportKey)) {
+        jsonResponse(false, 'Permission denied for selected report.');
+    }
+
+    $fromDate = rptDate($_GET['from_date'] ?? date('Y-m-01')) ?: date('Y-m-01');
+    $toDate = rptDate($_GET['to_date'] ?? date('Y-m-d')) ?: date('Y-m-d');
+    $search = trim((string)($_GET['search'] ?? ''));
+
+    if ($fromDate > $toDate) {
+        jsonResponse(false, 'From date cannot be greater than To date.');
+    }
+
+    try {
+        $data = runReport($pdo, $businessId, $branchId, $reportKey, $fromDate, $toDate, $search);
+        $data['filters'] = [
+            'report_key' => $reportKey,
+            'from_date' => $fromDate,
+            'to_date' => $toDate,
+            'search' => $search
+        ];
+        $data['context'] = [
+            'can_print' => canUseAllReportsMenu(6),
+            'can_export' => canUseAllReportsMenu(7),
+            'can_generate_report' => canUseAllReportsMenu(31)
+        ];
+
+        jsonResponse(true, 'Report loaded.', $data);
+    } catch (Throwable $e) {
+        jsonResponse(false, $e->getMessage());
+    }
 }
 
 function runReport(PDO $pdo, $bid, $brid, $key, $from, $to, $search) {

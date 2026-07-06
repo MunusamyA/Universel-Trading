@@ -5,10 +5,15 @@ $(document).ready(function () {
     let quickMasterModal = new bootstrap.Modal(document.getElementById('quickMasterModal'));
     let hsnList = [];
 
-    loadCategories();
-    loadHsnCodes();
+    let pageContext = {
+        can_add: false,
+        can_edit: false,
+        add_form_title: 'Add Product',
+        edit_form_title: 'Edit Product',
+        list_url: ''
+    };
 
-    if (productId > 0) loadProductForEdit(productId);
+    loadPageContext();
 
     $('#category_id').on('change', function () {
         loadSubCategories($(this).val());
@@ -31,6 +36,11 @@ $(document).ready(function () {
     });
 
     $('.quick-master-btn').on('click', function () {
+        if (!pageContext.can_add) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         openQuickMaster($(this).data('master'));
     });
 
@@ -41,6 +51,18 @@ $(document).ready(function () {
 
     $('#productForm').on('submit', function (e) {
         e.preventDefault();
+
+        let currentProductId = parseInt($('#product_id').val() || 0);
+
+        if (currentProductId > 0 && !pageContext.can_edit) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
+        if (currentProductId <= 0 && !pageContext.can_add) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
 
         if ($('#category_id').val() === '') return warn('Please select category.', '#category_id');
         if ($('#sub_category_id').val() === '') return warn('Please select sub category.', '#sub_category_id');
@@ -74,7 +96,7 @@ $(document).ready(function () {
         $('#saveProductBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Saving...');
 
         $.ajax({
-            url: window.BASE_URL + 'api/products.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'POST',
             dataType: 'json',
             data: formData,
@@ -98,6 +120,71 @@ $(document).ready(function () {
             }
         });
     });
+
+    function loadPageContext() {
+        $.ajax({
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
+            type: 'GET',
+            dataType: 'json',
+            data: {
+                action: 'get_page_context'
+            },
+            success: function (response) {
+                if (response.status === true) {
+                    pageContext = response.data.context || pageContext;
+                    applyPageContext();
+                    loadCategories();
+                    loadHsnCodes();
+
+                    if (productId > 0) {
+                        loadProductForEdit(productId);
+                    }
+                } else {
+                    showToastSafe('error', response.message || 'Permission denied.');
+                    disableProductForm();
+                }
+            },
+            error: function (xhr) {
+                console.log(xhr.responseText);
+                showToastSafe('error', 'Server error.');
+                disableProductForm();
+            }
+        });
+    }
+
+    function applyPageContext() {
+        if (pageContext.list_url) {
+            $('#backProductsBtn').attr('href', pageContext.list_url);
+        }
+
+        if (productId > 0) {
+            $('#productPageTitle').text(pageContext.edit_form_title || 'Edit Product');
+
+            if (!pageContext.can_edit) {
+                showToastSafe('error', 'Permission denied.');
+                disableProductForm();
+            }
+        } else {
+            $('#productPageTitle').text(pageContext.add_form_title || 'Add Product');
+
+            if (!pageContext.can_add) {
+                showToastSafe('error', 'Permission denied.');
+                disableProductForm();
+            }
+        }
+
+        if (pageContext.can_add) {
+            $('.quick-master-btn').removeClass('d-none');
+        } else {
+            $('.quick-master-btn').addClass('d-none');
+        }
+    }
+
+    function disableProductForm() {
+        $('#productForm :input').prop('disabled', true);
+        $('#saveProductBtn').prop('disabled', true);
+        $('.quick-master-btn').addClass('d-none');
+    }
 
     function calculateProductPrice() {
         let enterMrp = parseFloat($('#enter_mrp').val()) || 0;
@@ -175,7 +262,7 @@ $(document).ready(function () {
 
     function loadProductForEdit(productId) {
         $.ajax({
-            url: window.BASE_URL + 'api/products.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
             data: { action: 'get_product', product_id: productId },
@@ -204,7 +291,7 @@ $(document).ready(function () {
                     $('#initial_stock').val(parseFloat(p.initial_stock || 0).toFixed(4));
                     $('#initial_stock_expiry_date').val(p.initial_stock_expiry_date || '');
                     $('#minimum_stock').val(parseFloat(p.minimum_stock || 0).toFixed(2));
-                    $('#status').val(p.status);
+                    $('#status1').val(p.status);
                     renderCurrentImage(p.product_image);
                     loadCategories(p.category_id);
                     loadSubCategories(p.category_id, p.sub_category_id);
@@ -217,7 +304,7 @@ $(document).ready(function () {
 
     function loadCategories(selectedId) {
         $.ajax({
-            url: window.BASE_URL + 'api/products.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
             data: { action: 'get_categories' },
@@ -236,7 +323,7 @@ $(document).ready(function () {
     function loadSubCategories(categoryId, selectedId) {
         if (!categoryId) { $('#sub_category_id').html('<option value="">Select Sub Category</option>'); return; }
         $.ajax({
-            url: window.BASE_URL + 'api/products.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
             data: { action: 'get_sub_categories', category_id: categoryId },
@@ -254,7 +341,7 @@ $(document).ready(function () {
 
     function loadHsnCodes(selectedId) {
         $.ajax({
-            url: window.BASE_URL + 'api/products.php',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
             data: { action: 'get_hsn_codes' },
@@ -301,13 +388,18 @@ $(document).ready(function () {
     }
 
     function saveQuickMaster() {
+        if (!pageContext.can_add) {
+            showToastSafe('error', 'Permission denied.');
+            return;
+        }
+
         let master = $('#quick_master_type').val(), action = '';
         if (master === 'category') { if ($.trim($('#quick_category_name').val()) === '') return warn('Please enter category name.', '#quick_category_name'); action = 'quick_add_category'; }
         if (master === 'sub_category') { if ($('#quick_sub_category_category_id').val() === '') return warn('Please select category.', '#quick_sub_category_category_id'); if ($.trim($('#quick_sub_category_name').val()) === '') return warn('Please enter sub category name.', '#quick_sub_category_name'); action = 'quick_add_sub_category'; }
         if (master === 'hsn') { if ($.trim($('#quick_hsn_code').val()) === '') return warn('Please enter HSN code.', '#quick_hsn_code'); action = 'quick_add_hsn'; }
         $('#saveQuickMasterBtn').prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Saving...');
         $.ajax({
-            url: window.BASE_URL + 'api/products.php', type: 'POST', dataType: 'json',
+            url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php', type: 'POST', dataType: 'json',
             data: $('#quickMasterForm').serialize() + '&action=' + action,
             success: function (response) {
                 if (response.status === true) {

@@ -39,8 +39,8 @@ $page_title = ($purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase') . ' | Univers
                 <div class="row">
                     <div class="col-12">
                         <div class="page-title-box d-flex align-items-center justify-content-between">
-                            <h4 class="mb-0"><?= $purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase'; ?></h4>
-                            <a href="<?= BASE_URL; ?>pages/purchases.php" class="btn btn-light">
+                            <h4 class="mb-0" id="purchasePageTitle"><?= $purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase'; ?></h4>
+                            <a href="<?= BASE_URL; ?>pages/purchases.php" class="btn btn-light" id="backPurchasesBtn">
                                 <i class="mdi mdi-arrow-left me-1"></i> Back
                             </a>
                         </div>
@@ -103,7 +103,7 @@ $page_title = ($purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase') . ' | Univers
                                 <div class="card-body" style="overflow:visible;">
                                     <div class="d-flex align-items-center justify-content-between mb-3">
                                         <h5 class="font-size-15 mb-0">Select Product</h5>
-                                        <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#quickProductModal">
+                                        <button type="button" class="btn btn-success btn-sm d-none" id="quickProductBtn" data-bs-toggle="modal" data-bs-target="#quickProductModal">
                                             <i class="mdi mdi-plus me-1"></i> New Product
                                         </button>
                                     </div>
@@ -136,7 +136,7 @@ $page_title = ($purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase') . ' | Univers
 
                                         <div class="row">
                                             <div class="col-md-4 mb-2">
-                                                <label class="form-label">HSN <button type="button" class="btn btn-link btn-sm p-0 ms-1" data-bs-toggle="modal" data-bs-target="#hsnModal">+ Add</button></label>
+                                                <label class="form-label">HSN <button type="button" class="btn btn-link btn-sm p-0 ms-1 d-none quick-hsn-btn" data-bs-toggle="modal" data-bs-target="#hsnModal">+ Add</button></label>
                                                 <select class="form-select form-select-sm pre-calc" id="pre_hsn_id">
                                                     <option value="">Select HSN</option>
                                                 </select>
@@ -602,8 +602,9 @@ $page_title = ($purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase') . ' | Univers
 <?php include BASE_PATH . 'includes/scripts.php'; ?>
 
 <script>
-    window.BASE_URL = "<?= BASE_URL; ?>";
-    window.PURCHASE_ID = <?= $purchaseId; ?>;
+    window.BASE_URL = <?= json_encode(BASE_URL); ?>;
+    window.MASTER_FILE = "purchases";
+    window.PURCHASE_ID = <?= (int)$purchaseId; ?>;
 </script>
 <script src="<?= BASE_URL; ?>pages-js/purchase-form.js?v=<?= time(); ?>"></script>
 </body>

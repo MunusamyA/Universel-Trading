@@ -18,8 +18,8 @@ $page_title = ($productId > 0 ? 'Edit Product' : 'Add Product') . ' | Universal 
 <div class="main-content"><div class="page-content"><div class="container-fluid">
 
 <div class="row"><div class="col-12"><div class="page-title-box d-flex align-items-center justify-content-between">
-<h4 class="mb-0"><?= $productId > 0 ? 'Edit Product' : 'Add Product'; ?></h4>
-<a href="<?= BASE_URL; ?>pages/products.php" class="btn btn-light"><i class="mdi mdi-arrow-left me-1"></i> Back</a>
+<h4 class="mb-0" id="productPageTitle"><?= $productId > 0 ? 'Edit Product' : 'Add Product'; ?></h4>
+<a href="<?= BASE_URL; ?>pages/products.php" class="btn btn-light" id="backProductsBtn"><i class="mdi mdi-arrow-left me-1"></i> Back</a>
 </div></div></div>
 
 <form id="productForm" autocomplete="off" enctype="multipart/form-data">
@@ -96,6 +96,6 @@ $page_title = ($productId > 0 ? 'Edit Product' : 'Add Product') . ' | Universal 
 
 <?php include BASE_PATH . 'includes/rightbar.php'; ?>
 <?php include BASE_PATH . 'includes/scripts.php'; ?>
-<script>window.BASE_URL = "<?= BASE_URL; ?>"; window.PRODUCT_ID = <?= $productId; ?>;</script>
+<script>window.BASE_URL = <?= json_encode(BASE_URL); ?>; window.MASTER_FILE = "products"; window.PRODUCT_ID = <?= (int)$productId; ?>;</script>
 <script src="<?= BASE_URL; ?>pages-js/product-form.js?v=<?= time(); ?>"></script>
 </body></html>

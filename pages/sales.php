@@ -215,16 +215,16 @@ $salesPageConfig = [
                         <div class="page-title-box d-flex align-items-center justify-content-between">
                             <h4 class="mb-0">Sales Entry</h4>
                             <div class="page-title-right">
-                                <a href="<?= BASE_URL; ?>pages/sales-list.php" class="btn btn-light">
+                                <a href="<?= BASE_URL; ?>pages/sales-list.php" class="btn btn-light d-none" id="salesListNavBtn">
                                     <i class="mdi mdi-format-list-bulleted me-1"></i> Sales List
                                 </a>
-                                <button type="button" class="btn btn-warning" id="holdBillBtn">
+                                <button type="button" class="btn btn-warning d-none" id="holdBillBtn">
                                     <i class="mdi mdi-pause-circle-outline me-1"></i> Hold Bill
                                 </button>
-                                <button type="button" class="btn btn-info" id="holdBillsListBtn">
+                                <button type="button" class="btn btn-info d-none" id="holdBillsListBtn">
                                     <i class="mdi mdi-format-list-bulleted me-1"></i> Hold Bills
                                 </button>
-                                <button type="button" class="btn btn-outline-danger" id="clearDraftBtn">
+                                <button type="button" class="btn btn-outline-danger d-none" id="clearDraftBtn">
                                     <i class="mdi mdi-delete-sweep-outline me-1"></i> Clear Draft
                                 </button>
                                 <a href="<?= BASE_URL; ?>pages/dashboard.php" class="btn btn-danger" id="posExitBtn" title="Exit POS">
@@ -241,6 +241,9 @@ $salesPageConfig = [
                     <div class="card">
                         <div class="card-body">
                             <h5 class="font-size-15 mb-3">Document Details</h5>
+                            <div class="alert alert-warning py-2 d-none" id="salesPermissionAlert">
+                                You do not have permission to create or generate sales documents.
+                            </div>
 
                             <div class="row">
                                 <div class="col-md-3">
@@ -296,7 +299,7 @@ $salesPageConfig = [
                                         <div class="position-relative">
                                             <div class="input-group">
                                                 <input type="text" class="form-control" id="customerSearch" placeholder="Search customer / Walk-in">
-                                                <button type="button" class="btn btn-primary" id="addCustomerBtn" title="Add Customer">
+                                                <button type="button" class="btn btn-primary d-none" id="addCustomerBtn" title="Add Customer">
                                                     <i class="mdi mdi-plus"></i>
                                                 </button>
                                             </div>
@@ -379,7 +382,7 @@ $salesPageConfig = [
                                 <div class="card-body">
                                     <div class="d-flex align-items-center justify-content-between mb-3">
                                         <h5 class="font-size-15 mb-0">Payments</h5>
-                                        <button type="button" class="btn btn-outline-primary btn-sm" id="addPaymentBtn">
+                                        <button type="button" class="btn btn-outline-primary btn-sm d-none" id="addPaymentBtn">
                                             <i class="mdi mdi-plus me-1"></i> Add Payment
                                         </button>
                                     </div>
@@ -457,7 +460,7 @@ $salesPageConfig = [
 
                                 <div class="card-footer">
                                     <div class="d-flex flex-wrap justify-content-end gap-2" id="salesActionButtons">
-                                        <button type="button" class="btn btn-success" id="saveSaleBtn">
+                                        <button type="button" class="btn btn-success d-none" id="saveSaleBtn">
                                             <i class="mdi mdi-content-save me-1"></i> Save
                                         </button>
                                         <button type="button" class="btn btn-outline-primary d-none sales-convert-btn" data-target-type="2" id="convertProformaBtn">
@@ -623,7 +626,7 @@ $salesPageConfig = [
 
                 <div class="modal-footer">
                     <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
-                    <button type="submit" class="btn btn-primary" id="saveCustomerBtn">Save Customer</button>
+                    <button type="submit" class="btn btn-primary d-none" id="saveCustomerBtn">Save Customer</button>
                 </div>
             </form>
         </div>
