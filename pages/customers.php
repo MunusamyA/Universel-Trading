@@ -45,7 +45,10 @@ $page_title = 'Customers | Universal ERP';
                                 <p class="text-muted mb-0 mt-1" id="pageNoteText">Loading...</p>
                             </div>
 
-                            <div class="page-title-right">
+                            <div class="page-title-right d-flex gap-2">
+                                <a href="<?= BASE_URL; ?>pages/customer-ledger.php" class="btn btn-light" id="customerLedgerBtn">
+                                    <i class="mdi mdi-account-cash-outline me-1"></i> Customer Ledger
+                                </a>
                                 <a href="<?= BASE_URL; ?>pages/customers-create.php" class="btn btn-primary d-none" id="addCustomerBtn">
                                     <i class="mdi mdi-plus me-1"></i>
                                     <span id="addCustomerBtnText">Add Customer</span>
@@ -194,7 +197,6 @@ $page_title = 'Customers | Universal ERP';
 
 <?php
 $rightbarPath1 = BASE_PATH . 'includes/rightbar.php';
-
 if (file_exists($rightbarPath1)) {
     include $rightbarPath1;
 }
@@ -202,7 +204,6 @@ if (file_exists($rightbarPath1)) {
 
 <?php
 $scriptsPath1 = BASE_PATH . 'includes/scripts.php';
-
 if (file_exists($scriptsPath1)) {
     include $scriptsPath1;
 }

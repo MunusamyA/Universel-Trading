@@ -104,6 +104,10 @@ $(document).ready(function () {
             $('#addCustomerBtn').attr('href', pageContext.add_url);
         }
 
+        if (pageContext.ledger_url && $('#customerLedgerBtn').length) {
+            $('#customerLedgerBtn').attr('href', pageContext.ledger_url);
+        }
+
         if (pageContext.can_add) {
             $('#addCustomerBtn').removeClass('d-none');
         } else {

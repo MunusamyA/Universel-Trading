@@ -573,8 +573,19 @@ function getReportFilterOptions(PDO $pdo)
             break;
 
         case 'user':
-            $stmt = $pdo->prepare("SELECT id, COALESCE(name, username, CONCAT('User ', id)) AS name, username AS subtitle FROM users WHERE status = 1 ORDER BY name ASC, username ASC");
-            $stmt->execute();
+            /*
+             * User filter must show only current branch users.
+             * Do not show users from other branches/businesses.
+             */
+            $stmt = $pdo->prepare("
+                SELECT id, COALESCE(name, username, CONCAT('User ', id)) AS name, username AS subtitle
+                FROM users
+                WHERE business_id = ?
+                AND branch_id = ?
+                AND status = 1
+                ORDER BY name ASC, username ASC
+            ");
+            $stmt->execute([$businessId, $branchId]);
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
             break;
     }
@@ -615,25 +626,11 @@ function listAllReportData(PDO $pdo)
     }
 
     if ($expectedFilter['type'] !== '') {
+        /*
+         * Party/Product/User filter is optional.
+         * filter_id = 0 means list everything for the selected report.
+         */
         $filterType = $expectedFilter['type'];
-
-        if ($filterId <= 0) {
-            $empty = build('Select ' . $expectedFilter['label'], [$expectedFilter['label']], [], []);
-            $empty['message'] = 'Please select ' . strtolower($expectedFilter['label']) . ' to load this report.';
-            $empty['requires_filter'] = true;
-            $empty['filter_type'] = $expectedFilter['type'];
-            $empty['filter_label'] = $expectedFilter['label'];
-            $empty['filters'] = [
-                'report_key' => $reportKey,
-                'from_date' => $fromDate,
-                'to_date' => $toDate,
-                'search' => $search,
-                'filter_type' => $filterType,
-                'filter_id' => 0,
-                'filter_name' => ''
-            ];
-            jsonResponse(true, 'Select nominee.', $empty);
-        }
     } else {
         $filterType = '';
         $filterId = 0;
@@ -641,6 +638,11 @@ function listAllReportData(PDO $pdo)
 
     try {
         $filterName = $filterId > 0 ? reportFilterName($pdo, $businessId, $branchId, $filterType, $filterId) : '';
+
+        if ($filterId > 0 && $filterName === '') {
+            jsonResponse(false, 'Selected filter is not available for this branch.');
+        }
+
         $data = runReport($pdo, $businessId, $branchId, $reportKey, $fromDate, $toDate, $search, $filterType, $filterId);
         $data['filters'] = [
             'report_key' => $reportKey,
@@ -652,7 +654,8 @@ function listAllReportData(PDO $pdo)
             'filter_label' => $expectedFilter['label'],
             'filter_name' => $filterName
         ];
-        $data['requires_filter'] = $expectedFilter['type'] !== '';
+        $data['requires_filter'] = false;
+        $data['optional_filter'] = $expectedFilter['type'] !== '';
         $data['filter_type'] = $filterType;
         $data['filter_label'] = $expectedFilter['label'];
         $data['context'] = [
@@ -695,8 +698,16 @@ function reportFilterName(PDO $pdo, $bid, $brid, $type, $id)
             return (string)$stmt->fetchColumn();
 
         case 'user':
-            $stmt = $pdo->prepare("SELECT COALESCE(name, username, CONCAT('User ', id)) FROM users WHERE id = ? LIMIT 1");
-            $stmt->execute([$id]);
+            $stmt = $pdo->prepare("
+                SELECT COALESCE(name, username, CONCAT('User ', id))
+                FROM users
+                WHERE id = ?
+                AND business_id = ?
+                AND branch_id = ?
+                AND status = 1
+                LIMIT 1
+            ");
+            $stmt->execute([$id, $bid, $brid]);
             return (string)$stmt->fetchColumn();
     }
 

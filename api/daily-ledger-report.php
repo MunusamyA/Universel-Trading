@@ -313,11 +313,12 @@ function dlPermissionAllowed($moduleKeys, $action = 1)
         $moduleKeys = [$moduleKeys];
     }
 
-    if (dlRoleBaseMenuRowsExist($moduleKeys)) {
-        return dlRoleBasePermissionAllowed($moduleKeys, $action);
-    }
-
-    return dlHasPermissionFallback($moduleKeys, $action);
+    /*
+     * Daily ledger report permission source:
+     * role_base_access + sidebar_menus + access_actions only.
+     * No hasPermission fallback and no old role_menu_permissions table.
+     */
+    return dlRoleBasePermissionAllowed($moduleKeys, $action);
 }
 
 function dlEntryTypePermissionKeys($entryType)

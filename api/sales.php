@@ -374,90 +374,6 @@ function roleBaseMenuRowsExist($moduleKeys)
     }
 }
 
-function legacyRoleMenuPermissionAllowed($moduleKeys, $actionCode)
-{
-    global $pdo;
-
-    if (!isset($pdo) || !($pdo instanceof PDO)) {
-        return false;
-    }
-
-    $columnMap = [
-        1 => 'can_view',
-        2 => 'can_view',
-        3 => 'can_add',
-        4 => 'can_edit',
-        5 => 'can_delete',
-        6 => 'can_print',
-        7 => 'can_export',
-        8 => 'can_approve',
-        9 => 'can_convert',
-        10 => 'can_adjust',
-        11 => 'can_ship',
-        12 => 'can_generate_invoice',
-        13 => 'can_generate_invoice',
-        14 => 'can_generate_invoice',
-        15 => 'can_generate_invoice',
-        16 => 'can_generate_invoice'
-    ];
-
-    $actionCode = (int)$actionCode;
-
-    if (empty($columnMap[$actionCode])) {
-        return false;
-    }
-
-    if (!is_array($moduleKeys)) {
-        $moduleKeys = [$moduleKeys];
-    }
-
-    $moduleKeys = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $moduleKeys)))));
-    $roleIds = currentRoleIdsForSalesPermission();
-
-    if (!$moduleKeys || !$roleIds) {
-        return false;
-    }
-
-    try {
-        $keyHolders = [];
-        $roleHolders = [];
-        $params = [];
-
-        foreach ($moduleKeys as $index => $moduleKey) {
-            $key = ':legacy_menu_key_' . $index;
-            $keyHolders[] = $key;
-            $params[$key] = $moduleKey;
-        }
-
-        foreach ($roleIds as $index => $roleId) {
-            $key = ':legacy_role_id_' . $index;
-            $roleHolders[] = $key;
-            $params[$key] = (int)$roleId;
-        }
-
-        $column = $columnMap[$actionCode];
-
-        $sql = "
-            SELECT 1
-            FROM role_menu_permissions rmp
-            INNER JOIN sidebar_menus sm ON sm.id = rmp.menu_id
-            WHERE rmp.status = 1
-            AND sm.status = 1
-            AND rmp.role_id IN (" . implode(',', $roleHolders) . ")
-            AND sm.menu_key IN (" . implode(',', $keyHolders) . ")
-            AND rmp.$column = 1
-            LIMIT 1
-        ";
-
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute($params);
-
-        return (bool)$stmt->fetchColumn();
-    } catch (Throwable $e) {
-        return false;
-    }
-}
-
 function permissionAllowed($moduleKeys, $action)
 {
     if (function_exists('isPlatformOwner') && isPlatformOwner()) {
@@ -470,31 +386,16 @@ function permissionAllowed($moduleKeys, $action)
         $moduleKeys = [$moduleKeys];
     }
 
-    if (roleBaseMenuRowsExist($moduleKeys)) {
-        return roleBasePermissionAllowed($moduleKeys, $actionCode);
-    }
-
-    if (legacyRoleMenuPermissionAllowed($moduleKeys, $actionCode)) {
-        return true;
-    }
-
     /*
     |--------------------------------------------------------------------------
-    | Existing project helper fallback.
+    | Role permission source
     |--------------------------------------------------------------------------
-    | This remains only as a fallback. The API no longer depends only on it.
+    | All sales permissions are checked only from role_base_access + sidebar_menus.
+    | access_actions must contain the required action code.
     |--------------------------------------------------------------------------
     */
 
-    if (function_exists('hasPermission')) {
-        foreach ($moduleKeys as $moduleKey) {
-            if ($moduleKey !== '' && hasPermission($moduleKey, $actionCode)) {
-                return true;
-            }
-        }
-    }
-
-    return false;
+    return roleBasePermissionAllowed($moduleKeys, $actionCode);
 }
 
 function requireSalesPermission($action = 1)
@@ -1000,7 +901,6 @@ function salesPermissionDebug(PDO $pdo)
 
     $menuRows = [];
     $roleBaseRows = [];
-    $legacyRows = [];
 
     if ($menuKeys) {
         $holders = [];
@@ -1061,34 +961,6 @@ function salesPermissionDebug(PDO $pdo)
         $stmt->execute($params);
         $roleBaseRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        try {
-            $stmt = $pdo->prepare("
-                SELECT
-                    rmp.role_id,
-                    r.role_name,
-                    sm.menu_key,
-                    sm.menu_name,
-                    rmp.can_view,
-                    rmp.can_add,
-                    rmp.can_edit,
-                    rmp.can_delete,
-                    rmp.can_print,
-                    rmp.can_export,
-                    rmp.can_convert,
-                    rmp.can_generate_invoice,
-                    rmp.status
-                FROM role_menu_permissions rmp
-                INNER JOIN roles r ON r.id = rmp.role_id
-                INNER JOIN sidebar_menus sm ON sm.id = rmp.menu_id
-                WHERE rmp.role_id IN (" . implode(',', $roleHolders) . ")
-                AND sm.menu_key IN (" . implode(',', $keyHolders) . ")
-                ORDER BY rmp.role_id ASC, sm.sort_order ASC, sm.id ASC
-            ");
-            $stmt->execute($params);
-            $legacyRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        } catch (Throwable $e) {
-            $legacyRows = [];
-        }
     }
 
     $docPermissions = [];
@@ -1121,8 +993,7 @@ function salesPermissionDebug(PDO $pdo)
             'global_sales_keys' => salesPermissionKeys(),
             'document_permissions' => $docPermissions,
             'sidebar_menu_rows' => $menuRows,
-            'role_base_access_rows' => $roleBaseRows,
-            'legacy_role_menu_permission_rows' => $legacyRows
+            'role_base_access_rows' => $roleBaseRows
         ]
     ]);
 }

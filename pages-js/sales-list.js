@@ -233,14 +233,27 @@ $(document).ready(function () {
         let totalAmount = 0;
         let dueAmount = 0;
         let paidAmount = 0;
+        let activeCount = 0;
 
         $.each(rows, function (_, row) {
+            let status = parseInt(row.status || 0);
+
+            /*
+             * 3 = Deleted, 4 = Cancelled.
+             * Closed documents must stay visible in the list for audit,
+             * but they should not affect dashboard/stat cards.
+             */
+            if (status === 3 || status === 4) {
+                return;
+            }
+
+            activeCount++;
             totalAmount += parseFloat(row.grand_total || 0);
             dueAmount += parseFloat(row.due_amount || 0);
             paidAmount += parseFloat(row.paid_amount || 0);
         });
 
-        $('#countCard').text(rows.length);
+        $('#countCard').text(activeCount);
         $('#totalCard').text(formatCurrency(totalAmount));
         $('#paidCard').text(formatCurrency(paidAmount));
         $('#dueCard').text(formatCurrency(dueAmount));

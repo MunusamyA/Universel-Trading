@@ -2,7 +2,6 @@ $(document).ready(function () {
     $('#preloader').fadeOut('slow');
 
     let selectedReport = '';
-    let selectedGroup = '';
     let searchTimer = null;
     let lastReportData = null;
     let currentFilterType = '';
@@ -68,19 +67,8 @@ $(document).ready(function () {
 
     $('#loadReportBtn, #fromDate, #toDate').on('click change', loadReport);
 
-    $('#reportGroupSelect').on('change', function () {
-        selectedGroup = $(this).val() || '';
-        let firstReport = firstReportInGroup(selectedGroup);
-        selectedReport = firstReport ? firstReport.key : '';
-        renderReportTypeSelect();
-        loadReportFilterOptions();
-    });
-
     $('#reportTypeSelect').on('change', function () {
         selectedReport = $(this).val() || '';
-        let report = getReportByKey(selectedReport);
-        selectedGroup = report ? report.group : selectedGroup;
-        $('#reportGroupSelect').val(selectedGroup);
         loadReportFilterOptions();
     });
 
@@ -165,7 +153,7 @@ $(document).ready(function () {
     }
 
     function showPermissionError(message) {
-        $('#reportGroupSelect, #reportTypeSelect').prop('disabled', true);
+        $('#reportTypeSelect').prop('disabled', true);
         $('#reportTitle').text('Permission denied');
         $('#recordCount').text('0 Records');
         $('#reportPeriod').text('-');
@@ -178,16 +166,8 @@ $(document).ready(function () {
 
     function renderReportSelects() {
         let reports = pageContext.reports || [];
-        let groups = [];
-
-        $.each(reports, function (_, report) {
-            if (report.group && groups.indexOf(report.group) === -1) {
-                groups.push(report.group);
-            }
-        });
 
         if (!reports.length) {
-            $('#reportGroupSelect').html('<option value="">No group</option>');
             $('#reportTypeSelect').html('<option value="">No report</option>');
             showPermissionError('No reports available for this role.');
             return;
@@ -195,47 +175,30 @@ $(document).ready(function () {
 
         let selected = getReportByKey(selectedReport) || reports[0];
         selectedReport = selected.key;
-        selectedGroup = selected.group || groups[0] || '';
 
-        let groupHtml = '';
-        $.each(groups, function (_, group) {
-            groupHtml += '<option value="' + escapeHtml(group) + '" ' + (group === selectedGroup ? 'selected' : '') + '>' + escapeHtml(group + ' Reports') + '</option>';
-        });
-
-        $('#reportGroupSelect').html(groupHtml);
-        renderReportTypeSelect();
-    }
-
-    function renderReportTypeSelect() {
-        let reports = reportsInGroup(selectedGroup);
         let html = '';
-
-        if (!reports.length) {
-            $('#reportTypeSelect').html('<option value="">No report</option>');
-            selectedReport = '';
-            return;
-        }
-
-        if (!getReportByKey(selectedReport) || reports.filter(function (report) { return report.key === selectedReport; }).length === 0) {
-            selectedReport = reports[0].key;
-        }
+        let currentGroup = '';
 
         $.each(reports, function (_, report) {
+            let group = report.group || 'Reports';
+
+            if (group !== currentGroup) {
+                if (currentGroup !== '') {
+                    html += '</optgroup>';
+                }
+
+                currentGroup = group;
+                html += '<optgroup label="' + escapeHtml(group + ' Reports') + '">';
+            }
+
             html += '<option value="' + escapeHtml(report.key) + '" ' + (report.key === selectedReport ? 'selected' : '') + '>' + escapeHtml(report.title || report.key) + '</option>';
         });
 
+        if (currentGroup !== '') {
+            html += '</optgroup>';
+        }
+
         $('#reportTypeSelect').html(html);
-    }
-
-    function reportsInGroup(group) {
-        return (pageContext.reports || []).filter(function (report) {
-            return (report.group || '') === group;
-        });
-    }
-
-    function firstReportInGroup(group) {
-        let reports = reportsInGroup(group);
-        return reports.length ? reports[0] : null;
     }
 
     function getReportByKey(key) {
@@ -252,11 +215,6 @@ $(document).ready(function () {
     function loadReport() {
         if (!selectedReport) {
             showPermissionError('No report selected.');
-            return;
-        }
-
-        if (currentFilterType && parseInt($('#reportEntityFilter').val() || 0) <= 0) {
-            renderSelectEntityMessage();
             return;
         }
 
@@ -329,11 +287,7 @@ $(document).ready(function () {
                     currentFilterRows = response.data.rows || [];
                     applyEntityFilterOptions();
 
-                    if (!currentFilterType) {
-                        loadReport();
-                    } else {
-                        renderSelectEntityMessage();
-                    }
+                    loadReport();
                 } else {
                     currentFilterType = '';
                     currentFilterLabel = '';
@@ -364,7 +318,7 @@ $(document).ready(function () {
         $('#reportEntityFilterBox').removeClass('d-none');
         $('#reportEntityFilterLabel').text('Select ' + currentFilterLabel);
 
-        let html = '<option value="">Select ' + escapeHtml(currentFilterLabel) + '</option>';
+        let html = '<option value="">All ' + escapeHtml(pluralLabel(currentFilterLabel)) + '</option>';
 
         $.each(currentFilterRows, function (_, item) {
             let name = item.name || '';
@@ -383,10 +337,10 @@ $(document).ready(function () {
 
     function renderSelectEntityMessage() {
         let selected = getReportByKey(selectedReport);
-        let title = currentFilterType ? ((selected ? selected.title + ' - ' : '') + 'Select ' + currentFilterLabel) : 'Select Report';
+        let title = selected ? selected.title : 'Select Report';
         let message = currentFilterType
-            ? ('Please select ' + currentFilterLabel.toLowerCase() + ' to load this report. Overall report is disabled.')
-            : 'Select report group and report name to load data.';
+            ? ('Select a particular ' + currentFilterLabel.toLowerCase() + ' to filter, or keep All ' + pluralLabel(currentFilterLabel) + ' to list everything.')
+            : 'Select report name to load data.';
 
         let period = $('#fromDate').val() && $('#toDate').val()
             ? 'Date: ' + $('#fromDate').val() + ' to ' + $('#toDate').val()
@@ -400,6 +354,17 @@ $(document).ready(function () {
         $('#reportBody').html('<tr><td class="text-center text-muted">' + escapeHtml(message) + '</td></tr>');
         $('#reportFoot').html('');
         lastReportData = null;
+    }
+
+    function pluralLabel(labelText) {
+        switch (String(labelText || '').toLowerCase()) {
+            case 'customer': return 'Customers';
+            case 'supplier': return 'Suppliers';
+            case 'product': return 'Products';
+            case 'expense category': return 'Expense Categories';
+            case 'user': return 'Users';
+            default: return labelText || 'Items';
+        }
     }
 
     function filterTypeLabel(type) {
@@ -428,8 +393,10 @@ $(document).ready(function () {
                 : 'Date: ' + filters.from_date + ' to ' + filters.to_date;
         }
 
-        if (filters.filter_name) {
-            period += (period ? ' | ' : '') + (filters.filter_label || filterTypeLabel(filters.filter_type)) + ': ' + filters.filter_name;
+        if (filters.filter_type) {
+            let labelText = filters.filter_label || filterTypeLabel(filters.filter_type);
+            let nameText = filters.filter_name || ('All ' + pluralLabel(labelText));
+            period += (period ? ' | ' : '') + labelText + ': ' + nameText;
         }
 
         if (filters.search) {

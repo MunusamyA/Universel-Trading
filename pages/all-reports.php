@@ -162,31 +162,30 @@ $toDate = date('Y-m-d');
                 <div class="card filter-card no-print">
                     <div class="card-body">
                         <div class="row g-3 align-items-end">
-                            <div class="col-md-3">
-                                <label class="form-label">Report Group</label>
-                                <select class="form-select" id="reportGroupSelect">
-                                    <option value="">Loading...</option>
-                                </select>
-                            </div>
-                            <div class="col-md-3">
+                            <div class="col-md-4">
                                 <label class="form-label">Report Name</label>
                                 <select class="form-select" id="reportTypeSelect">
                                     <option value="">Loading...</option>
                                 </select>
+                                <small class="text-muted">All reports are available in this single list.</small>
                             </div>
-                            <div class="col-md-3 d-none" id="reportEntityFilterBox">
+
+                            <div class="col-md-4 d-none" id="reportEntityFilterBox">
                                 <label class="form-label" id="reportEntityFilterLabel">Select Party</label>
                                 <select class="form-select" id="reportEntityFilter">
                                     <option value="">Select</option>
                                 </select>
+                                <small class="text-muted">Optional: select one customer / supplier / product to filter, or keep All to list everything.</small>
                             </div>
-                            <div class="col-md-3">
+
+                            <div class="col-md-4">
                                 <label class="form-label">Search</label>
                                 <div class="input-group">
                                     <span class="input-group-text"><i class="mdi mdi-magnify"></i></span>
                                     <input type="text" class="form-control" id="reportSearch" placeholder="Bill No / Party / Product / Reference">
                                 </div>
                             </div>
+
                             <div class="col-md-2">
                                 <label class="form-label">From Date</label>
                                 <input type="date" class="form-control" id="fromDate" value="<?= $fromDate; ?>">
@@ -202,7 +201,7 @@ $toDate = date('Y-m-d');
                             </div>
                             <div class="col-md-6">
                                 <small class="text-muted d-block">
-                                    Select report group, report name and related customer / supplier / product. Overall report loading is disabled where a selection is required.
+                                    Select report name from all reports. Customer / supplier / product selection is optional; if not selected, the report lists everything.
                                 </small>
                             </div>
                         </div>

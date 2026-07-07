@@ -2,6 +2,8 @@ $(document).ready(function () {
 
     $('#preloader').fadeOut('slow');
 
+    let initialCustomerId = parseInt(new URLSearchParams(window.location.search).get('customer_id') || new URLSearchParams(window.location.search).get('id') || 0);
+
     let pageContext = {
         can_view: false,
         can_list: false,
@@ -90,6 +92,12 @@ $(document).ready(function () {
                     });
 
                     $('#customerId').html(html);
+
+                    if (initialCustomerId > 0 && $('#customerId option[value="' + initialCustomerId + '"]').length) {
+                        $('#customerId').val(String(initialCustomerId));
+                        initialCustomerId = 0;
+                        loadLedger();
+                    }
                 } else {
                     showToastSafe('error', response.message || 'Unable to load customers.');
                 }
