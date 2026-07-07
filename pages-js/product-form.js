@@ -2,7 +2,11 @@ $(document).ready(function () {
     $('#preloader').fadeOut('slow');
 
     let productId = parseInt(window.PRODUCT_ID || 0);
-    let quickMasterModal = new bootstrap.Modal(document.getElementById('quickMasterModal'));
+    let quickMasterModal = null;
+    const quickMasterModalEl = document.getElementById('quickMasterModal');
+    if (quickMasterModalEl && window.bootstrap && bootstrap.Modal) {
+        quickMasterModal = bootstrap.Modal.getOrCreateInstance(quickMasterModalEl);
+    }
     let hsnList = [];
 
     let pageContext = {
@@ -17,6 +21,10 @@ $(document).ready(function () {
 
     $('#category_id').on('change', function () {
         loadSubCategories($(this).val());
+    });
+
+    $('#secondary_unit_label').on('change', function () {
+        toggleSecondaryConversion();
     });
 
     $(document).on('input', '.text-uppercase', function () {
@@ -65,8 +73,6 @@ $(document).ready(function () {
         }
 
         if ($('#category_id').val() === '') return warn('Please select category.', '#category_id');
-        if ($('#sub_category_id').val() === '') return warn('Please select sub category.', '#sub_category_id');
-        if ($('#hsn_id').val() === '') return warn('Please select HSN.', '#hsn_id');
         if ($.trim($('#product_name').val()) === '') return warn('Please enter product name.', '#product_name');
 
         calculateProductPrice();
@@ -83,8 +89,11 @@ $(document).ready(function () {
         if (retailPrice <= stockPrice) return warn('Sale / retail price must be greater than stock price.', '#retail_price');
         if (wholesalePrice < stockPrice) return warn('Wholesale price must be greater than or equal to stock price.', '#wholesale_price');
         if ($('#base_unit').val() === '') return warn('Please select base unit.', '#base_unit');
-        if ($('#secondary_unit_label').val() === '') return warn('Please select secondary unit label.', '#secondary_unit_label');
-        if (secondaryValue <= 0) return warn('Secondary conversion must be greater than zero.', '#secondary_unit_value');
+        let secondaryLabel = $('#secondary_unit_label').val() || '';
+        if (secondaryLabel !== '' && secondaryValue <= 0) return warn('Please enter secondary conversion value.', '#secondary_unit_value');
+        if (secondaryLabel === '') {
+            $('#secondary_unit_value').val('');
+        }
         if (initialStock < 0) return warn('Initial stock cannot be negative.', '#initial_stock');
 
         $('#box_label').val('');
@@ -135,6 +144,7 @@ $(document).ready(function () {
                     applyPageContext();
                     loadCategories();
                     loadHsnCodes();
+                    toggleSecondaryConversion();
 
                     if (productId > 0) {
                         loadProductForEdit(productId);
@@ -286,8 +296,9 @@ $(document).ready(function () {
                     $('#wholesale_price').val(parseFloat(p.wholesale_price || 0).toFixed(2));
                     selectFallback('#base_unit', p.base_unit || 'Piece');
                     $('#box_label').val('');
-                    selectFallback('#secondary_unit_label', p.secondary_unit_label || 'Piece');
-                    $('#secondary_unit_value').val(parseFloat(p.secondary_unit_value || 1).toFixed(4));
+                    selectFallback('#secondary_unit_label', p.secondary_unit_label || '');
+                    $('#secondary_unit_value').val((p.secondary_unit_label && p.secondary_unit_value !== null && p.secondary_unit_value !== '') ? parseFloat(p.secondary_unit_value).toFixed(4) : '');
+                    toggleSecondaryConversion();
                     $('#initial_stock').val(parseFloat(p.initial_stock || 0).toFixed(4));
                     $('#initial_stock_expiry_date').val(p.initial_stock_expiry_date || '');
                     $('#minimum_stock').val(parseFloat(p.minimum_stock || 0).toFixed(2));
@@ -321,14 +332,14 @@ $(document).ready(function () {
     }
 
     function loadSubCategories(categoryId, selectedId) {
-        if (!categoryId) { $('#sub_category_id').html('<option value="">Select Sub Category</option>'); return; }
+        if (!categoryId) { $('#sub_category_id').html('<option value="">Select Sub Category (Optional)</option>'); return; }
         $.ajax({
             url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
             type: 'GET',
             dataType: 'json',
             data: { action: 'get_sub_categories', category_id: categoryId },
             success: function (response) {
-                let html = '<option value="">Select Sub Category</option>';
+                let html = '<option value="">Select Sub Category (Optional)</option>';
                 if (response.status === true) {
                     $.each(response.data.sub_categories || [], function (_, s) {
                         html += `<option value="${s.id}" ${parseInt(s.id) === parseInt(selectedId || 0) ? 'selected' : ''}>${escapeHtml(s.sub_category_name)}</option>`;
@@ -346,7 +357,7 @@ $(document).ready(function () {
             dataType: 'json',
             data: { action: 'get_hsn_codes' },
             success: function (response) {
-                let html = '<option value="">Select HSN</option>';
+                let html = '<option value="">Select HSN (Optional)</option>';
                 if (response.status === true) {
                     hsnList = response.data.hsn_codes || [];
                     $.each(hsnList, function (_, h) {
@@ -358,6 +369,15 @@ $(document).ready(function () {
                 calculateProductPrice();
             }
         });
+    }
+
+
+    function toggleSecondaryConversion() {
+        let hasSecondaryUnit = ($('#secondary_unit_label').val() || '') !== '';
+        $('#secondary_unit_value').prop('disabled', !hasSecondaryUnit);
+        if (!hasSecondaryUnit) {
+            $('#secondary_unit_value').val('');
+        }
     }
 
     function selectedGstPercentage() {
@@ -384,6 +404,10 @@ $(document).ready(function () {
             $('#quickMasterTitle').text('Add HSN');
             $('#quickMasterBody').html('<div class="row"><div class="col-md-6"><label class="form-label">HSN Code <span class="text-danger">*</span></label><input type="text" class="form-control" name="hsn_code" id="quick_hsn_code"></div><div class="col-md-6"><label class="form-label">Description</label><input type="text" class="form-control" name="hsn_description"></div><div class="col-md-4 mt-3"><label class="form-label">CGST %</label><input type="number" step="0.01" min="0" class="form-control" name="cgst_percentage" value="0.00"></div><div class="col-md-4 mt-3"><label class="form-label">SGST %</label><input type="number" step="0.01" min="0" class="form-control" name="sgst_percentage" value="0.00"></div><div class="col-md-4 mt-3"><label class="form-label">IGST %</label><input type="number" step="0.01" min="0" class="form-control" name="igst_percentage" value="0.00"></div></div>');
         }
+        if (!quickMasterModal) {
+            showToastSafe('error', 'Quick master modal not found on this page.');
+            return;
+        }
         quickMasterModal.show();
     }
 
@@ -404,7 +428,7 @@ $(document).ready(function () {
             success: function (response) {
                 if (response.status === true) {
                     showToastSafe('success', response.message || 'Saved.');
-                    quickMasterModal.hide();
+                    if (quickMasterModal) quickMasterModal.hide();
                     if (master === 'category') loadCategories(response.data.id);
                     if (master === 'sub_category') { $('#category_id').val(response.data.category_id); loadSubCategories(response.data.category_id, response.data.id); }
                     if (master === 'hsn') loadHsnCodes(response.data.id);

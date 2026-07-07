@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/config.php';
 require_once BASE_PATH . 'includes/db.php';
 require_once BASE_PATH . 'includes/security.php';
 require_once BASE_PATH . 'includes/auth.php';
+require_once BASE_PATH . 'includes/stock-movement-helper.php';
 
 secureSessionStart();
 header('Content-Type: application/json');
@@ -280,7 +281,7 @@ function listPurchases(PDO $pdo)
 
 function getPurchase(PDO $pdo)
 {
-    requirePurchasePermission(4);
+    requirePurchasePermission(1);
 
     $scope = getScope();
     $purchaseId = (int)($_GET['purchase_id'] ?? 0);
@@ -701,7 +702,7 @@ function savePurchase(PDO $pdo)
                 ':branch_id' => $scope['branch_id']
             ]);
 
-            deletePurchaseItems($pdo, $scope, $purchaseId);
+            deletePurchaseItems($pdo, $scope, $purchaseId, 'PURCHASE_EDIT_REVERSE');
         } else {
             $stmt = $pdo->prepare("
                 INSERT INTO purchases
@@ -768,6 +769,25 @@ function savePurchase(PDO $pdo)
 
 function insertPurchaseItems(PDO $pdo, array $scope, $purchaseId, array $items)
 {
+    $purchaseStmt = $pdo->prepare("
+        SELECT purchase_date, batch_no, bill_no
+        FROM purchases
+        WHERE id = :id
+        AND business_id = :business_id
+        AND branch_id = :branch_id
+        LIMIT 1
+    ");
+    $purchaseStmt->execute([
+        ':id' => $purchaseId,
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id']
+    ]);
+
+    $purchase = $purchaseStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$purchase) {
+        throw new Exception('Purchase header not found for stock movement.');
+    }
+
     $itemSql = "
         INSERT INTO purchase_items
         (
@@ -849,10 +869,33 @@ function insertPurchaseItems(PDO $pdo, array $scope, $purchaseId, array $items)
             ':line_total' => $item['line_total'],
             ':mrp' => $item['mrp']
         ]);
+
+        $purchaseItemId = (int)$pdo->lastInsertId();
+        $afterQty = stockProductBalance($pdo, $scope, (int)$item['product_id']);
+        $qty = (float)$item['stock_qty'];
+
+        addStockMovement($pdo, $scope, [
+            'product_id' => (int)$item['product_id'],
+            'purchase_id' => (int)$purchaseId,
+            'purchase_item_id' => $purchaseItemId,
+            'movement_date' => $purchase['purchase_date'] ?: date('Y-m-d'),
+            'movement_type' => 'IN',
+            'source_type' => 'PURCHASE',
+            'source_no' => $purchase['bill_no'] ?: ('PUR-' . $purchaseId),
+            'batch_no' => $purchase['batch_no'] ?? null,
+            'product_code' => $item['product_code'],
+            'product_name' => $item['product_name'],
+            'qty' => $qty,
+            'rate' => (float)$item['purchase_price'],
+            'amount' => round($qty * (float)$item['purchase_price'], 2),
+            'before_qty' => round($afterQty - $qty, 4),
+            'after_qty' => $afterQty,
+            'remarks' => 'Purchase stock IN'
+        ]);
     }
 }
 
-function deletePurchaseItems(PDO $pdo, array $scope, $purchaseId)
+function deletePurchaseItems(PDO $pdo, array $scope, $purchaseId, string $reverseSourceType = 'PURCHASE_EDIT_REVERSE')
 {
     $soldCheck = $pdo->prepare("
         SELECT COUNT(*)
@@ -870,6 +913,52 @@ function deletePurchaseItems(PDO $pdo, array $scope, $purchaseId)
 
     if ((int)$soldCheck->fetchColumn() > 0) {
         throw new Exception('This purchase stock is already sold. Cannot edit or delete this purchase.');
+    }
+
+    $rowsStmt = $pdo->prepare("
+        SELECT pi.*, p.purchase_date, p.batch_no, p.bill_no
+        FROM purchase_items pi
+        INNER JOIN purchases p ON p.id = pi.purchase_id
+        WHERE pi.purchase_id = :purchase_id
+        AND pi.business_id = :business_id
+        AND pi.branch_id = :branch_id
+        AND pi.status = 1
+    ");
+    $rowsStmt->execute([
+        ':purchase_id' => $purchaseId,
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id']
+    ]);
+
+    $rows = $rowsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    foreach ($rows as $row) {
+        $qty = (float)($row['available_qty'] ?? $row['stock_qty'] ?? 0);
+        if ($qty <= 0) {
+            continue;
+        }
+
+        $beforeQty = stockProductBalance($pdo, $scope, (int)$row['product_id']);
+        $afterQty = round($beforeQty - $qty, 4);
+
+        addStockMovement($pdo, $scope, [
+            'product_id' => (int)$row['product_id'],
+            'purchase_id' => (int)$purchaseId,
+            'purchase_item_id' => (int)$row['id'],
+            'movement_date' => date('Y-m-d'),
+            'movement_type' => 'OUT',
+            'source_type' => $reverseSourceType,
+            'source_no' => $row['bill_no'] ?: ('PUR-' . $purchaseId),
+            'batch_no' => $row['batch_no'] ?? null,
+            'product_code' => $row['product_code'],
+            'product_name' => $row['product_name'],
+            'qty' => $qty,
+            'rate' => (float)$row['purchase_price'],
+            'amount' => round($qty * (float)$row['purchase_price'], 2),
+            'before_qty' => $beforeQty,
+            'after_qty' => $afterQty,
+            'remarks' => $reverseSourceType === 'PURCHASE_DELETE' ? 'Purchase delete stock OUT' : 'Purchase edit reverse stock OUT'
+        ]);
     }
 
     $itemStmt = $pdo->prepare("
@@ -927,7 +1016,7 @@ function deletePurchase(PDO $pdo)
     try {
         $pdo->beginTransaction();
 
-        deletePurchaseItems($pdo, $scope, $purchaseId);
+        deletePurchaseItems($pdo, $scope, $purchaseId, 'PURCHASE_DELETE');
 
         $stmt = $pdo->prepare("
             DELETE FROM purchases

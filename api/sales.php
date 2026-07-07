@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/config.php';
 require_once BASE_PATH . 'includes/db.php';
 require_once BASE_PATH . 'includes/security.php';
 require_once BASE_PATH . 'includes/auth.php';
+require_once BASE_PATH . 'includes/stock-movement-helper.php';
 
 secureSessionStart();
 header('Content-Type: application/json');
@@ -2870,13 +2871,19 @@ function saveSale(PDO $pdo)
         $taxAmount = $cgstAmount + $sgstAmount + $igstAmount;
 
         $headerDiscountAmount = 0.0;
+        $beforeHeaderDiscountTotal = round2($itemTaxable + $taxAmount);
         if ($headerDiscountValue > 0) {
+            /* Match sales entry screen: header discount is applied on visible line total. */
             $headerDiscountAmount = $headerDiscountType === 1
-                ? round2($itemTaxable * $headerDiscountValue / 100)
+                ? round2($beforeHeaderDiscountTotal * $headerDiscountValue / 100)
                 : $headerDiscountValue;
         }
 
-        $grandTotal = round2($itemTaxable + $taxAmount - $headerDiscountAmount + $roundOff + $shippingCharges);
+        if ($headerDiscountAmount > $beforeHeaderDiscountTotal) {
+            $headerDiscountAmount = $beforeHeaderDiscountTotal;
+        }
+
+        $grandTotal = round2($beforeHeaderDiscountTotal - $headerDiscountAmount + $roundOff + $shippingCharges);
         if ($grandTotal < 0) {
             $grandTotal = 0;
         }
@@ -3063,10 +3070,34 @@ function saveSale(PDO $pdo)
         }
 
         foreach ($computedItems as $item) {
-            insertSaleItem($pdo, $scope, $saleId, $item);
+            $salesItemId = insertSaleItem($pdo, $scope, $saleId, $item);
 
             if ($shouldDeductStock) {
                 deductBatchStock($pdo, $scope, (int)$item['purchase_item_id'], (float)$item['qty']);
+
+                $afterQty = stockProductBalance($pdo, $scope, (int)$item['product_id']);
+                $qty = (float)$item['qty'];
+
+                addStockMovement($pdo, $scope, [
+                    'product_id' => (int)$item['product_id'],
+                    'purchase_id' => !empty($item['purchase_id']) ? (int)$item['purchase_id'] : null,
+                    'purchase_item_id' => !empty($item['purchase_item_id']) ? (int)$item['purchase_item_id'] : null,
+                    'sales_id' => (int)$saleId,
+                    'sales_item_id' => (int)$salesItemId,
+                    'movement_date' => $salesDate ?: date('Y-m-d'),
+                    'movement_type' => 'OUT',
+                    'source_type' => 'SALES',
+                    'source_no' => $salesNo,
+                    'batch_no' => $item['purchase_batch_no'] ?? null,
+                    'product_code' => $item['product_code'] ?? null,
+                    'product_name' => $item['product_name'] ?? null,
+                    'qty' => $qty,
+                    'rate' => (float)($item['selling_rate'] ?? 0),
+                    'amount' => round((float)($item['line_total'] ?? 0), 2),
+                    'before_qty' => round($afterQty + $qty, 4),
+                    'after_qty' => $afterQty,
+                    'remarks' => 'Sales stock OUT'
+                ]);
             }
         }
 
@@ -3366,8 +3397,24 @@ function computeItems(PDO $pdo, array $scope, array $items, $invoiceType, $shoul
 
         $unitQty = toFloat($row['unit_qty'] ?? 0);
         $qtyPerUnit = toFloat($row['qty_per_unit'] ?? 1);
+        if ($qtyPerUnit <= 0) {
+            $qtyPerUnit = 1;
+        }
         $looseQty = toFloat($row['loose_qty'] ?? 0);
-        $qty = round($unitQty * $qtyPerUnit + $looseQty, 4);
+
+        /*
+         * IMPORTANT FIX:
+         * Frontend already calculates total qty and stores it in item.qty.
+         * Do not multiply again while saving, otherwise list/header amount becomes wrong.
+         * Use submitted qty first; calculate from Unit x Qty/Unit + Loose only as fallback.
+         */
+        $submittedQty = toFloat($row['qty'] ?? 0);
+        if ($submittedQty <= 0) {
+            $submittedQty = toFloat($row['entered_total_qty'] ?? 0);
+        }
+
+        $calculatedQty = round($unitQty * $qtyPerUnit + $looseQty, 4);
+        $qty = $submittedQty > 0 ? round($submittedQty, 4) : $calculatedQty;
 
         if ($qty <= 0) {
             throw new Exception('Total quantity must be greater than zero in row ' . ($index + 1));
@@ -3384,37 +3431,59 @@ function computeItems(PDO $pdo, array $scope, array $items, $invoiceType, $shoul
         }
 
         $priceType = (int)($row['price_type'] ?? 1);
-        $manualRate = toFloat($row['selling_rate'] ?? 0);
-        $baseRate = 0.0;
-
-        if ($priceType === 2) {
-            $baseRate = toFloat($batch['wholesale_price'] ?? 0);
-        } elseif ($priceType === 3) {
-            $baseRate = $manualRate;
-        } else {
+        if (!in_array($priceType, [1, 2, 3], true)) {
             $priceType = 1;
-            $baseRate = toFloat($batch['retail_price'] ?? 0);
         }
 
+        $submittedRate = toFloat($row['selling_rate'] ?? 0);
+
+        /*
+         * IMPORTANT RATE FIX:
+         * The POS screen calculates sale rate from the selected purchase batch cost.
+         * Example: purchase_price 127.22 + Retail markup 20% = 152.66 per piece.
+         * Then 5 qty = 763.30 + GST 5% = 801.46.
+         *
+         * Older server code used products.retail_price / wholesale_price as base and
+         * applied markup again. If retail_price already had the row total value,
+         * the server stored 801.46 as ONE PIECE rate and again multiplied by 5.
+         *
+         * So for Retail / Wholesale, always use purchase_items.purchase_price as
+         * base rate and then apply the selected markup. Use submitted selling_rate
+         * only for Manual price type or as a fallback when markup/base is missing.
+         */
+        $baseRate = toFloat($row['base_rate'] ?? 0);
         if ($baseRate <= 0) {
             $baseRate = toFloat($batch['purchase_price'] ?? 0);
         }
-
-        $markupType = (int)($row['markup_type'] ?? 1);
-        $markupValue = toFloat($row['markup_value'] ?? 0);
-
-        $sellingRate = $baseRate;
-        if ($markupValue > 0) {
-            if ($markupType === 1) {
-                $sellingRate += ($baseRate * $markupValue / 100);
-            } else {
-                $markupType = 2;
-                $sellingRate += $markupValue;
-            }
+        if ($baseRate <= 0) {
+            $baseRate = toFloat($batch['retail_price'] ?? 0);
+        }
+        if ($baseRate <= 0 && $submittedRate > 0) {
+            $baseRate = $submittedRate;
         }
 
-        if ($priceType === 3 && $manualRate > 0) {
-            $sellingRate = $manualRate;
+        $markupType = (int)($row['markup_type'] ?? 1);
+        if (!in_array($markupType, [1, 2], true)) {
+            $markupType = 1;
+        }
+        $markupValue = toFloat($row['markup_value'] ?? 0);
+
+        if ($priceType === 3 && $submittedRate > 0) {
+            // Manual price type: submitted rate is per-piece selling rate.
+            $sellingRate = $submittedRate;
+        } else {
+            $sellingRate = $baseRate;
+
+            if ($markupValue > 0) {
+                if ($markupType === 1) {
+                    $sellingRate += ($baseRate * $markupValue / 100);
+                } else {
+                    $sellingRate += $markupValue;
+                }
+            } elseif ($submittedRate > 0) {
+                // Fallback for old rows with no markup saved.
+                $sellingRate = $submittedRate;
+            }
         }
 
         $sellingRate = round2($sellingRate);
@@ -3638,6 +3707,8 @@ function insertSaleItem(PDO $pdo, array $scope, $saleId, array $item)
         ':line_total' => $item['line_total'],
         ':expiry_date' => $item['expiry_date']
     ]);
+
+    return (int)$pdo->lastInsertId();
 }
 
 function deductBatchStock(PDO $pdo, array $scope, $purchaseItemId, $qty)
@@ -3669,13 +3740,14 @@ function deductBatchStock(PDO $pdo, array $scope, $purchaseItemId, $qty)
 function reverseSaleStock(PDO $pdo, array $scope, $saleId)
 {
     $stmt = $pdo->prepare("
-        SELECT purchase_item_id, qty
-        FROM sales_items
-        WHERE sales_id = :sales_id
-        AND business_id = :business_id
-        AND branch_id = :branch_id
-        AND status = 1
-        AND purchase_item_id IS NOT NULL
+        SELECT si.*, s.sales_no, s.sales_date
+        FROM sales_items si
+        INNER JOIN sales s ON s.id = si.sales_id
+        WHERE si.sales_id = :sales_id
+        AND si.business_id = :business_id
+        AND si.branch_id = :branch_id
+        AND si.status = 1
+        AND si.purchase_item_id IS NOT NULL
     ");
     $stmt->execute([
         ':sales_id' => $saleId,
@@ -3706,6 +3778,29 @@ function reverseSaleStock(PDO $pdo, array $scope, $saleId)
             ':purchase_item_id' => (int)$item['purchase_item_id'],
             ':business_id' => $scope['business_id'],
             ':branch_id' => $scope['branch_id']
+        ]);
+
+        $afterQty = stockProductBalance($pdo, $scope, (int)$item['product_id']);
+
+        addStockMovement($pdo, $scope, [
+            'product_id' => (int)$item['product_id'],
+            'purchase_id' => !empty($item['purchase_id']) ? (int)$item['purchase_id'] : null,
+            'purchase_item_id' => !empty($item['purchase_item_id']) ? (int)$item['purchase_item_id'] : null,
+            'sales_id' => (int)$saleId,
+            'sales_item_id' => (int)$item['id'],
+            'movement_date' => date('Y-m-d'),
+            'movement_type' => 'IN',
+            'source_type' => 'SALE_REVERSE',
+            'source_no' => $item['sales_no'] ?? ('SALE-' . $saleId),
+            'batch_no' => $item['purchase_batch_no'] ?? null,
+            'product_code' => $item['product_code'] ?? null,
+            'product_name' => $item['product_name'] ?? null,
+            'qty' => $qty,
+            'rate' => (float)($item['selling_rate'] ?? 0),
+            'amount' => round((float)($item['line_total'] ?? 0), 2),
+            'before_qty' => round($afterQty - $qty, 4),
+            'after_qty' => $afterQty,
+            'remarks' => 'Sales reverse/cancel stock IN'
         ]);
     }
 

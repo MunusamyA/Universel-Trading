@@ -135,7 +135,9 @@ $page_title = 'Product Master | Universal ERP';
                                         <th>Category</th>
                                         <th>HSN/GST</th>
                                         <th>MRP</th>
-                                        <th>Stock</th>
+                                        <th>Stock Price</th>
+                                        <th>Available Stock</th>
+                                        <th>Base Unit</th>
                                         <th>Retail</th>
                                         <th>Wholesale</th>
                                         <th>Save</th>
@@ -146,7 +148,7 @@ $page_title = 'Product Master | Universal ERP';
 
                                 <tbody id="productTableBody">
                                     <tr>
-                                        <td colspan="12" class="text-center text-muted">Loading...</td>
+                                        <td colspan="14" class="text-center text-muted">Loading...</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -160,6 +162,36 @@ $page_title = 'Product Master | Universal ERP';
 
         <?php include BASE_PATH . 'includes/footer.php'; ?>
 
+    </div>
+</div>
+
+<!-- Product View Modal -->
+<div class="modal fade" id="productViewModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Product Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="productViewBody">
+                <div class="text-center text-muted py-4">Loading...</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Product Stock Details Modal -->
+<div class="modal fade" id="productStockModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Batchwise Stock Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="productStockBody">
+                <div class="text-center text-muted py-4">Loading...</div>
+            </div>
+        </div>
     </div>
 </div>
 

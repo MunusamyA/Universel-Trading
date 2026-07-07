@@ -17,7 +17,8 @@ $(document).ready(function () {
         add_button_label: 'Add Supplier',
         add_modal_title: 'Add Supplier',
         edit_modal_title: 'Edit Supplier',
-        supplier_payment_url: ''
+        supplier_payment_url: '',
+        view_url: ''
     };
 
     loadPageContext();
@@ -267,8 +268,12 @@ $(document).ready(function () {
         $.each(suppliers, function (index, supplier) {
             let actionHtml = '';
 
+            if (supplier.can_view || pageContext.can_view || pageContext.can_list) {
+                actionHtml += '<a class="btn btn-outline-info btn-sm" href="' + supplierViewUrl(supplier.id) + '" title="View"><i class="mdi mdi-eye"></i></a>';
+            }
+
             if (supplier.can_supplier_payment) {
-                actionHtml += '<a class="btn btn-outline-success btn-sm" href="' + supplierPaymentUrl(supplier.id) + '" title="Supplier Payment"><i class="mdi mdi-cash-multiple"></i></a>';
+                actionHtml += '<a class="btn btn-outline-success btn-sm ms-1" href="' + supplierPaymentUrl(supplier.id) + '" title="Supplier Payment"><i class="mdi mdi-cash-multiple"></i></a>';
             }
 
             if (supplier.can_edit) {
@@ -312,6 +317,11 @@ $(document).ready(function () {
         });
 
         $('#supplierTableBody').html(html);
+    }
+
+    function supplierViewUrl(supplierId) {
+        let baseUrl = pageContext.view_url || (window.BASE_URL + 'pages/supplier-view.php');
+        return baseUrl + '?id=' + supplierId;
     }
 
     function supplierPaymentUrl(supplierId) {

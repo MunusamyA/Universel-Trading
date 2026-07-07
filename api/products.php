@@ -4,6 +4,11 @@ require_once BASE_PATH . 'includes/db.php';
 require_once BASE_PATH . 'includes/security.php';
 require_once BASE_PATH . 'includes/auth.php';
 
+$stockMovementHelper = BASE_PATH . 'includes/stock-movement-helper.php';
+if (file_exists($stockMovementHelper)) {
+    require_once $stockMovementHelper;
+}
+
 secureSessionStart();
 header('Content-Type: application/json');
 requireApiLogin();
@@ -14,6 +19,7 @@ switch ($action) {
     case 'get_page_context': getPageContext($pdo); break;
     case 'list_products': listProducts($pdo); break;
     case 'get_product': getProduct($pdo); break;
+    case 'get_product_stock_details': getProductStockDetails($pdo); break;
     case 'save_product': verifyCsrfToken(); saveProduct($pdo); break;
     case 'delete_product': verifyCsrfToken(); deleteProduct($pdo); break;
     case 'get_categories': getCategories($pdo); break;
@@ -155,12 +161,38 @@ function listProducts(PDO $pdo) {
         $params[':search_hsn_code'] = $searchValue;
     }
 
+    $params[':stock_business_id'] = $scope['business_id'];
+    $params[':stock_branch_id'] = $scope['branch_id'];
+
     $stmt = $pdo->prepare("
-        SELECT p.*, c.category_name, sc.sub_category_name, h.hsn_code, h.cgst_percentage, h.sgst_percentage, h.igst_percentage
+        SELECT
+            p.*,
+            c.category_name,
+            sc.sub_category_name,
+            h.hsn_code,
+            h.cgst_percentage,
+            h.sgst_percentage,
+            h.igst_percentage,
+            COALESCE(st.available_stock, 0) AS available_stock
         FROM products p
         LEFT JOIN categories c ON c.id=p.category_id
         LEFT JOIN sub_categories sc ON sc.id=p.sub_category_id
         LEFT JOIN hsn_codes h ON h.id=p.hsn_id
+        LEFT JOIN (
+            SELECT
+                pi.product_id,
+                COALESCE(SUM(pi.available_qty), 0) AS available_stock
+            FROM purchase_items pi
+            INNER JOIN purchases pur ON pur.id = pi.purchase_id
+                AND pur.business_id = pi.business_id
+                AND pur.branch_id = pi.branch_id
+            WHERE pi.business_id = :stock_business_id
+            AND pi.branch_id = :stock_branch_id
+            AND pi.status = 1
+            AND pur.status = 1
+            AND pi.available_qty > 0
+            GROUP BY pi.product_id
+        ) st ON st.product_id = p.id
         $where
         ORDER BY p.id DESC
     ");
@@ -184,15 +216,156 @@ function listProducts(PDO $pdo) {
 }
 
 function getProduct(PDO $pdo) {
-    requireProductPermission(4);
+    if (!productCan(1) && !productCan(2) && !productCan(4)) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
     $scope = getScope();
     $id = (int)($_GET['product_id'] ?? 0);
     if ($id <= 0) jsonResponse(false, 'Invalid product.');
-    $stmt = $pdo->prepare("SELECT * FROM products WHERE id=:id AND business_id=:business_id AND branch_id=:branch_id LIMIT 1");
-    $stmt->execute([':id'=>$id, ':business_id'=>$scope['business_id'], ':branch_id'=>$scope['branch_id']]);
+
+    $stmt = $pdo->prepare("
+        SELECT
+            p.*,
+            c.category_name,
+            sc.sub_category_name,
+            h.hsn_code,
+            h.hsn_description,
+            h.cgst_percentage,
+            h.sgst_percentage,
+            h.igst_percentage
+        FROM products p
+        LEFT JOIN categories c ON c.id = p.category_id
+        LEFT JOIN sub_categories sc ON sc.id = p.sub_category_id
+        LEFT JOIN hsn_codes h ON h.id = p.hsn_id
+        WHERE p.id = :id
+        AND p.business_id = :business_id
+        AND p.branch_id = :branch_id
+        LIMIT 1
+    ");
+    $stmt->execute([
+        ':id' => $id,
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id']
+    ]);
+
     $product = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$product) jsonResponse(false, 'Product not found.');
-    jsonResponse(true, 'Product loaded.', ['product'=>$product]);
+
+    jsonResponse(true, 'Product loaded.', ['product' => $product]);
+}
+
+function getProductStockDetails(PDO $pdo) {
+    if (!productCan(1) && !productCan(2) && !productCan(4)) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
+    $scope = getScope();
+    $productId = (int)($_GET['product_id'] ?? 0);
+    if ($productId <= 0) jsonResponse(false, 'Invalid product.');
+
+    $productStmt = $pdo->prepare("
+        SELECT
+            p.id,
+            p.product_code,
+            p.product_name,
+            p.base_unit,
+            p.minimum_stock,
+            p.cost_price,
+            p.retail_price,
+            p.wholesale_price,
+            c.category_name,
+            sc.sub_category_name,
+            h.hsn_code,
+            h.cgst_percentage,
+            h.sgst_percentage,
+            h.igst_percentage
+        FROM products p
+        LEFT JOIN categories c ON c.id = p.category_id
+        LEFT JOIN sub_categories sc ON sc.id = p.sub_category_id
+        LEFT JOIN hsn_codes h ON h.id = p.hsn_id
+        WHERE p.id = :product_id
+        AND p.business_id = :business_id
+        AND p.branch_id = :branch_id
+        LIMIT 1
+    ");
+    $productStmt->execute([
+        ':product_id' => $productId,
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id']
+    ]);
+    $product = $productStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$product) jsonResponse(false, 'Product not found.');
+
+    $batchStmt = $pdo->prepare("
+        SELECT
+            pi.id AS purchase_item_id,
+            pi.purchase_id,
+            pi.product_id,
+            pi.product_code,
+            pi.product_name,
+            pi.hsn_code,
+            pi.box_qty,
+            pi.loose_piece_qty,
+            pi.qty,
+            pi.free_qty,
+            pi.unit_conversion,
+            pi.stock_qty,
+            pi.sold_qty,
+            pi.available_qty,
+            pi.purchase_price,
+            pi.mrp,
+            pi.line_total,
+            pi.expiry_date,
+            pi.unit_label,
+            pi.base_unit,
+            pi.box_label,
+            p.bill_no,
+            p.batch_no,
+            p.purchase_date,
+            p.grand_total,
+            p.status AS purchase_status,
+            s.supplier_name
+        FROM purchase_items pi
+        INNER JOIN purchases p ON p.id = pi.purchase_id
+        LEFT JOIN suppliers s ON s.id = p.supplier_id
+        WHERE pi.business_id = :business_id
+        AND pi.branch_id = :branch_id
+        AND pi.product_id = :product_id
+        AND pi.status = 1
+        AND p.status = 1
+        AND pi.available_qty > 0
+        ORDER BY p.purchase_date ASC, pi.id ASC
+    ");
+    $batchStmt->execute([
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id'],
+        ':product_id' => $productId
+    ]);
+    $batches = $batchStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $totalStock = 0;
+    $totalSold = 0;
+    $totalAvailable = 0;
+    $stockValue = 0;
+
+    foreach ($batches as $batch) {
+        $totalStock += (float)($batch['stock_qty'] ?? 0);
+        $totalSold += (float)($batch['sold_qty'] ?? 0);
+        $totalAvailable += (float)($batch['available_qty'] ?? 0);
+        $stockValue += ((float)($batch['available_qty'] ?? 0) * (float)($batch['purchase_price'] ?? 0));
+    }
+
+    jsonResponse(true, 'Stock details loaded.', [
+        'product' => $product,
+        'batches' => $batches,
+        'summary' => [
+            'total_stock' => round($totalStock, 4),
+            'total_sold' => round($totalSold, 4),
+            'total_available' => round($totalAvailable, 4),
+            'stock_value' => round($stockValue, 2)
+        ]
+    ]);
 }
 
 function saveProduct(PDO $pdo) {
@@ -201,23 +374,36 @@ function saveProduct(PDO $pdo) {
     requireProductPermission($productId > 0 ? 4 : 3);
 
     $categoryId = (int)($_POST['category_id'] ?? 0);
-    $subCategoryId = (int)($_POST['sub_category_id'] ?? 0);
-    $hsnId = (int)($_POST['hsn_id'] ?? 0);
+    $subCategoryId = (int)($_POST['sub_category_id'] ?? 0); // optional
+    $hsnId = (int)($_POST['hsn_id'] ?? 0); // optional
 
     $productCode = strtoupper(cleanInput($_POST['product_code'] ?? ''));
     $productName = cleanInput($_POST['product_name'] ?? '');
     $baseUnit = cleanInput($_POST['base_unit'] ?? 'Piece');
-    $boxLabel = null; // Box Label removed
-    $secondaryUnitLabel = cleanInput($_POST['secondary_unit_label'] ?? 'Piece');
-    $secondaryUnitValue = (float)($_POST['secondary_unit_value'] ?? 1);
-    $defaultPiecesPerBox = 1; // Pieces Per Box removed
+
+    // Secondary unit is optional.
+    // If no secondary unit is selected, label is saved as NULL and conversion is saved as 1.
+    $secondaryUnitLabelRaw = cleanInput($_POST['secondary_unit_label'] ?? '');
+    $secondaryUnitLabel = $secondaryUnitLabelRaw !== '' ? $secondaryUnitLabelRaw : null;
+    $secondaryUnitValueRaw = trim((string)($_POST['secondary_unit_value'] ?? ''));
+    $secondaryUnitValue = null;
+
+    if ($secondaryUnitLabel !== null) {
+        $secondaryUnitValue = round((float)$secondaryUnitValueRaw, 4);
+        if ($secondaryUnitValue <= 0) {
+            jsonResponse(false, 'Please enter secondary conversion value.');
+        }
+    }
+
+    $boxLabel = null;
+    $defaultPiecesPerBox = 1;
     $initialStock = round((float)($_POST['initial_stock'] ?? 0), 4);
     $initialStockExpiryDate = cleanInput($_POST['initial_stock_expiry_date'] ?? '');
 
     $enterMrp = round((float)($_POST['enter_mrp'] ?? 0), 2);
     $gstType = (int)($_POST['gst_type'] ?? 1);
-    $discountType = 1; // removed Discount Type
-    $discountValue = 0.00; // removed Discount
+    $discountType = 1;
+    $discountValue = 0.00;
 
     $retailMarkupType = (int)($_POST['retail_markup_type'] ?? 1);
     $retailMarkupValue = round((float)($_POST['retail_markup_value'] ?? 0), 2);
@@ -234,28 +420,24 @@ function saveProduct(PDO $pdo) {
     $removeImage = (int)($_POST['remove_image'] ?? 0);
 
     if ($categoryId <= 0) jsonResponse(false, 'Please select category.');
-    if ($subCategoryId <= 0) jsonResponse(false, 'Please select sub category.');
-    if ($hsnId <= 0) jsonResponse(false, 'Please select HSN.');
     if ($productName === '') jsonResponse(false, 'Please enter product name.');
     if ($enterMrp <= 0) jsonResponse(false, 'Please enter MRP.');
     if ($baseUnit === '') jsonResponse(false, 'Please select base unit.');
-    if ($secondaryUnitLabel === '') jsonResponse(false, 'Please select secondary unit label.');
-    if ($secondaryUnitValue <= 0) $secondaryUnitValue = 1;
     if ($initialStock < 0) jsonResponse(false, 'Initial stock cannot be negative.');
     if ($initialStockExpiryDate === '') $initialStockExpiryDate = null;
 
-    if (!in_array($gstType,[1,2],true)) $gstType=1;
-    if (!in_array($discountType,[1,2],true)) $discountType=1;
-    if (!in_array($retailMarkupType,[1,2],true)) $retailMarkupType=1;
-    if (!in_array($wholesaleMarkupType,[1,2],true)) $wholesaleMarkupType=1;
-    if (!in_array($markupType,[1,2],true)) $markupType=1;
-    if (!in_array($status,[1,2],true)) $status=1;
+    if (!in_array($gstType, [1,2], true)) $gstType = 1;
+    if (!in_array($discountType, [1,2], true)) $discountType = 1;
+    if (!in_array($retailMarkupType, [1,2], true)) $retailMarkupType = 1;
+    if (!in_array($wholesaleMarkupType, [1,2], true)) $wholesaleMarkupType = 1;
+    if (!in_array($markupType, [1,2], true)) $markupType = 1;
+    if (!in_array($status, [1,2], true)) $status = 1;
 
-    validateCategory($pdo,$scope,$categoryId);
-    validateSubCategory($pdo,$scope,$categoryId,$subCategoryId);
-    validateHsn($pdo,$scope,$hsnId);
+    validateCategory($pdo, $scope, $categoryId);
+    if ($subCategoryId > 0) validateSubCategory($pdo, $scope, $categoryId, $subCategoryId);
+    if ($hsnId > 0) validateHsn($pdo, $scope, $hsnId);
 
-    $gstPercentage = getHsnGstPercentage($pdo,$scope,$hsnId);
+    $gstPercentage = $hsnId > 0 ? getHsnGstPercentage($pdo, $scope, $hsnId) : 0;
     $finalMrp = $gstType === 1 ? $enterMrp : round($enterMrp + (($enterMrp * $gstPercentage) / 100), 2);
 
     $costPrice = round((float)($_POST['cost_price'] ?? 0), 2);
@@ -264,7 +446,7 @@ function saveProduct(PDO $pdo) {
     if ($retailPrice <= $costPrice) jsonResponse(false, 'Sale / retail price must be greater than stock price.');
     if ($wholesalePrice < $costPrice) jsonResponse(false, 'Wholesale price must be greater than or equal to stock price.');
 
-    if ($productCode === '') $productCode = generateProductCode($pdo,$scope['business_id'],$scope['branch_id']);
+    if ($productCode === '') $productCode = generateProductCode($pdo, $scope['business_id'], $scope['branch_id']);
 
     $oldImage = null;
     if ($productId > 0) {
@@ -274,63 +456,101 @@ function saveProduct(PDO $pdo) {
     }
 
     $imagePath = $oldImage;
-    if ($removeImage === 1) { deleteUploadedFile($oldImage); $imagePath = null; }
+    if ($removeImage === 1) {
+        deleteUploadedFile($oldImage);
+        $imagePath = null;
+    }
     if (!empty($_FILES['product_image']['name'])) {
         $newImage = uploadProductImage($_FILES['product_image']);
-        if ($newImage) { deleteUploadedFile($oldImage); $imagePath = $newImage; }
+        if ($newImage) {
+            deleteUploadedFile($oldImage);
+            $imagePath = $newImage;
+        }
     }
 
     $markupPercentage = $markupType === 1 ? $markupValue : 0;
 
+    $productData = [
+        'business_id' => $scope['business_id'],
+        'branch_id' => $scope['branch_id'],
+        'category_id' => $categoryId,
+        'sub_category_id' => $subCategoryId > 0 ? $subCategoryId : null,
+        'hsn_id' => $hsnId > 0 ? $hsnId : 0,
+        'product_code' => $productCode,
+        'product_name' => $productName,
+        'product_image' => $imagePath,
+        'enter_mrp' => $enterMrp,
+        'gst_type' => $gstType,
+        'final_mrp' => $finalMrp,
+        'discount_type' => $discountType,
+        'discount_value' => $discountValue,
+        'cost_price' => $costPrice,
+        'retail_markup_type' => $retailMarkupType,
+        'retail_markup_value' => $retailMarkupValue,
+        'retail_price' => $retailPrice,
+        'wholesale_markup_type' => $wholesaleMarkupType,
+        'wholesale_markup_value' => $wholesaleMarkupValue,
+        'wholesale_price' => $wholesalePrice,
+        'base_unit' => $baseUnit,
+        'secondary_unit_label' => $secondaryUnitLabel,
+        'secondary_unit_value' => $secondaryUnitValue,
+        'default_pieces_per_box' => $defaultPiecesPerBox,
+        'markup_type' => $markupType,
+        'markup_value' => $markupValue,
+        'markup_percentage' => $markupPercentage,
+        'minimum_stock' => $minimumStock,
+        'initial_stock' => $initialStock,
+        'initial_stock_expiry_date' => $initialStockExpiryDate,
+        'status' => $status
+    ];
+
     try {
+        $pdo->beginTransaction();
+
         if ($productId > 0) {
-            $sql = "UPDATE products SET
-                category_id=:category_id, sub_category_id=:sub_category_id, hsn_id=:hsn_id,
-                product_code=:product_code, product_name=:product_name, product_image=:product_image,
-                enter_mrp=:enter_mrp, gst_type=:gst_type, final_mrp=:final_mrp,
-                discount_type=:discount_type, discount_value=:discount_value, cost_price=:cost_price,
-                retail_markup_type=:retail_markup_type, retail_markup_value=:retail_markup_value, retail_price=:retail_price,
-                wholesale_markup_type=:wholesale_markup_type, wholesale_markup_value=:wholesale_markup_value, wholesale_price=:wholesale_price,
-                base_unit=:base_unit, secondary_unit_value=:secondary_unit_value,
-                default_pieces_per_box=:default_pieces_per_box, markup_type=:markup_type, markup_value=:markup_value, markup_percentage=:markup_percentage,
-                minimum_stock=:minimum_stock, initial_stock=:initial_stock, initial_stock_expiry_date=:initial_stock_expiry_date, status=:status
-                WHERE id=:product_id AND business_id=:business_id AND branch_id=:branch_id";
+            dynamicUpdate(
+                $pdo,
+                'products',
+                $productData,
+                'id = :product_id AND business_id = :business_id AND branch_id = :branch_id',
+                [
+                    ':product_id' => $productId,
+                    ':business_id' => $scope['business_id'],
+                    ':branch_id' => $scope['branch_id']
+                ]
+            );
+            $savedProductId = $productId;
         } else {
-            $sql = "INSERT INTO products
-                (business_id,branch_id,category_id,sub_category_id,hsn_id,product_code,product_name,product_image,
-                enter_mrp,gst_type,final_mrp,discount_type,discount_value,cost_price,
-                retail_markup_type,retail_markup_value,retail_price,wholesale_markup_type,wholesale_markup_value,wholesale_price,
-                base_unit,secondary_unit_value,default_pieces_per_box,
-                markup_type,markup_value,markup_percentage,minimum_stock,initial_stock,initial_stock_expiry_date,status,created_by)
-                VALUES
-                (:business_id,:branch_id,:category_id,:sub_category_id,:hsn_id,:product_code,:product_name,:product_image,
-                :enter_mrp,:gst_type,:final_mrp,:discount_type,:discount_value,:cost_price,
-                :retail_markup_type,:retail_markup_value,:retail_price,:wholesale_markup_type,:wholesale_markup_value,:wholesale_price,
-                :base_unit,:secondary_unit_value,:default_pieces_per_box,
-                :markup_type,:markup_value,:markup_percentage,:minimum_stock,:initial_stock,:initial_stock_expiry_date,:status,:created_by)";
+            $productData['created_by'] = currentUserId();
+            $savedProductId = dynamicInsert($pdo, 'products', $productData);
         }
 
-        $params = [
-            ':business_id'=>$scope['business_id'], ':branch_id'=>$scope['branch_id'], ':category_id'=>$categoryId, ':sub_category_id'=>$subCategoryId,
-            ':hsn_id'=>$hsnId, ':product_code'=>$productCode, ':product_name'=>$productName, ':product_image'=>$imagePath,
-            ':enter_mrp'=>$enterMrp, ':gst_type'=>$gstType, ':final_mrp'=>$finalMrp, ':discount_type'=>$discountType, ':discount_value'=>$discountValue, ':cost_price'=>$costPrice,
-            ':retail_markup_type'=>$retailMarkupType, ':retail_markup_value'=>$retailMarkupValue, ':retail_price'=>$retailPrice,
-            ':wholesale_markup_type'=>$wholesaleMarkupType, ':wholesale_markup_value'=>$wholesaleMarkupValue, ':wholesale_price'=>$wholesalePrice,
-            ':base_unit'=>$baseUnit, ':secondary_unit_value'=>$secondaryUnitValue,
-            ':default_pieces_per_box'=>$defaultPiecesPerBox, ':markup_type'=>$markupType, ':markup_value'=>$markupValue, ':markup_percentage'=>$markupPercentage,
-            ':minimum_stock'=>$minimumStock, ':initial_stock'=>$initialStock, ':initial_stock_expiry_date'=>$initialStockExpiryDate, ':status'=>$status
-        ];
+        if ($savedProductId <= 0) {
+            throw new Exception('Product save failed.');
+        }
 
-        if ($productId > 0) $params[':product_id'] = $productId;
-        else $params[':created_by'] = currentUserId();
+        // Initial stock is stored like direct/opening purchase.
+        // It creates purchases + purchase_items + stock_movements IN.
+        saveInitialStockPurchase(
+            $pdo,
+            $scope,
+            $savedProductId,
+            $initialStock,
+            $initialStockExpiryDate,
+            $costPrice,
+            $productName,
+            $productCode,
+            $baseUnit,
+            $secondaryUnitLabel ?: '',
+            $secondaryUnitValue !== null ? (float)$secondaryUnitValue : 0.0,
+            $hsnId,
+            $gstType,
+            $gstPercentage,
+            $retailPrice,
+            $wholesalePrice
+        );
 
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute($params);
-
-        $savedProductId = $productId > 0 ? $productId : (int)$pdo->lastInsertId();
-
-        // Initial stock is stored in purchases and purchase_items only. No extra batch table.
-        saveInitialStockPurchase($pdo, $scope, $savedProductId, $initialStock, $initialStockExpiryDate, $costPrice, $productName, $productCode, $baseUnit, $secondaryUnitLabel, $secondaryUnitValue, $hsnId, $gstType, $gstPercentage, $retailPrice, $wholesalePrice);
+        $pdo->commit();
 
         jsonResponse(true, $productId > 0 ? 'Product updated successfully.' : 'Product added successfully.', [
             'product_id' => $savedProductId,
@@ -338,10 +558,12 @@ function saveProduct(PDO $pdo) {
         ]);
 
     } catch (Exception $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         jsonResponse(false, $e->getMessage() ?: 'Product save failed.');
     }
 }
-
 
 function saveInitialStockBatch(PDO $pdo, array $scope, int $productId, float $quantity, $expiryDate, float $purchasePrice): void
 {
@@ -548,7 +770,15 @@ function saveInitialStockPurchase(
         $purchaseId = $existingPurchaseId;
         dynamicUpdate($pdo, 'purchases', $purchaseData, 'id = :id', [':id' => $purchaseId]);
 
-        // Remove old opening-stock item and recreate with current product master values.
+        // Remove old opening stock item and inactive old movement before recreating.
+        if (function_exists('markStockMovementsInactive')) {
+            markStockMovementsInactive($pdo, $scope, [
+                'source_type' => 'OPENING_STOCK',
+                'source_no' => $billNo,
+                'product_id' => $productId
+            ]);
+        }
+
         $delete = $pdo->prepare("
             DELETE FROM purchase_items
             WHERE purchase_id = :purchase_id
@@ -586,12 +816,14 @@ function saveInitialStockPurchase(
         'product_id' => $productId,
         'product_code' => $productCode,
         'product_name' => $productName,
-        'hsn_id' => $hsnId,
+        'hsn_id' => $hsnId > 0 ? $hsnId : null,
         'hsn_code' => '',
         'expiry_days' => $expiryDays,
         'expiry_date' => $expiryDate ?: null,
         'unit_label' => $baseUnit,
         'base_unit' => $baseUnit,
+        'secondary_unit_label' => $secondaryUnitLabel !== '' ? $secondaryUnitLabel : null,
+        'secondary_unit_value' => $secondaryUnitValue,
         'pieces_per_box' => 1,
         'box_qty' => 0,
         'loose_piece_qty' => $quantity,
@@ -634,9 +866,30 @@ function saveInitialStockPurchase(
         'remarks' => 'Opening stock from product master'
     ];
 
-    dynamicInsert($pdo, 'purchase_items', $itemData);
-}
+    $purchaseItemId = dynamicInsert($pdo, 'purchase_items', $itemData);
 
+    if ($purchaseItemId > 0 && function_exists('addStockMovement')) {
+        addStockMovement($pdo, $scope, [
+            'product_id' => $productId,
+            'purchase_id' => $purchaseId,
+            'purchase_item_id' => $purchaseItemId,
+            'movement_date' => $today,
+            'movement_type' => 'IN',
+            'source_type' => 'OPENING_STOCK',
+            'source_no' => $billNo,
+            'batch_no' => $batchNo,
+            'product_code' => $productCode,
+            'product_name' => $productName,
+            'qty' => $quantity,
+            'rate' => $purchasePrice,
+            'amount' => $lineTotal,
+            'before_qty' => 0,
+            'after_qty' => function_exists('stockProductBalance') ? stockProductBalance($pdo, $scope, $productId) : $quantity,
+            'remarks' => 'Initial stock from product master',
+            'created_by' => $userId
+        ]);
+    }
+}
 
 function deleteProduct(PDO $pdo) {
     requireProductPermission(5);
@@ -718,6 +971,7 @@ function validateHsn(PDO $pdo,array $scope,$id) {
     if (!$stmt->fetch()) jsonResponse(false,'Invalid HSN selected.');
 }
 function getHsnGstPercentage(PDO $pdo,array $scope,$hsnId) {
+    if ((int)$hsnId <= 0) return 0;
     $stmt=$pdo->prepare("SELECT cgst_percentage,sgst_percentage,igst_percentage FROM hsn_codes WHERE id=:id AND business_id=:business_id AND branch_id=:branch_id LIMIT 1");
     $stmt->execute([':id'=>$hsnId,':business_id'=>$scope['business_id'],':branch_id'=>$scope['branch_id']]);
     $row=$stmt->fetch(PDO::FETCH_ASSOC);

@@ -26,6 +26,10 @@ switch ($action) {
         getSupplier($pdo);
         break;
 
+    case 'get_supplier_view':
+        getSupplierView($pdo);
+        break;
+
     case 'save_supplier':
         verifyCsrfToken();
         saveSupplier($pdo);
@@ -89,7 +93,8 @@ function getPageContext(PDO $pdo)
             'add_button_label' => 'Add Supplier',
             'add_modal_title' => 'Add Supplier',
             'edit_modal_title' => 'Edit Supplier',
-            'supplier_payment_url' => BASE_URL . 'pages/supplier-payments.php'
+            'supplier_payment_url' => BASE_URL . 'pages/supplier-payments.php',
+            'view_url' => BASE_URL . 'pages/supplier-view.php'
         ]
     ]);
 }
@@ -208,7 +213,8 @@ function listSuppliers(PDO $pdo)
         foreach ($suppliers as &$supplier) {
             $supplier['can_edit'] = $canEdit;
             $supplier['can_delete'] = $canDelete;
-            $supplier['can_supplier_payment'] = $canSupplierPayment;
+            $supplier['can_view'] = supplierCan(1) || supplierCan(2);
+        $supplier['can_supplier_payment'] = $canSupplierPayment;
         }
         unset($supplier);
 
@@ -237,6 +243,166 @@ function listSuppliers(PDO $pdo)
 
     } catch (Exception $e) {
         jsonResponse(false, $e->getMessage() ?: 'Unable to load suppliers.');
+    }
+}
+
+function getSupplierView(PDO $pdo)
+{
+    if (!supplierCan(1) && !supplierCan(2)) {
+        jsonResponse(false, 'Permission denied.');
+    }
+
+    $scope = getScope();
+    $supplierId = (int)($_GET['supplier_id'] ?? $_GET['id'] ?? 0);
+
+    if ($supplierId <= 0) {
+        jsonResponse(false, 'Invalid supplier.');
+    }
+
+    try {
+        $stmt = $pdo->prepare("
+            SELECT
+                id,
+                supplier_name,
+                mobile,
+                email,
+                gst_number,
+                pan_number,
+                dl_number,
+                fl_number,
+                address,
+                city,
+                state,
+                pincode,
+                opening_outstanding,
+                current_outstanding,
+                bank_name,
+                bank_account_no,
+                bank_branch,
+                bank_ifsc,
+                upi_id,
+                status,
+                created_at,
+                updated_at
+            FROM suppliers
+            WHERE id = :supplier_id
+            AND business_id = :business_id
+            AND branch_id = :branch_id
+            LIMIT 1
+        ");
+        $stmt->execute([
+            ':supplier_id' => $supplierId,
+            ':business_id' => $scope['business_id'],
+            ':branch_id' => $scope['branch_id']
+        ]);
+        $supplier = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$supplier) {
+            jsonResponse(false, 'Supplier not found.');
+        }
+
+        $summaryStmt = $pdo->prepare("
+            SELECT
+                COUNT(*) AS total_purchases,
+                COALESCE(SUM(grand_total), 0) AS purchase_total,
+                COALESCE(SUM(paid_amount), 0) AS paid_amount,
+                COALESCE(SUM(due_amount), 0) AS due_amount
+            FROM purchases
+            WHERE supplier_id = :supplier_id
+            AND business_id = :business_id
+            AND branch_id = :branch_id
+            AND status = 1
+        ");
+        $summaryStmt->execute([
+            ':supplier_id' => $supplierId,
+            ':business_id' => $scope['business_id'],
+            ':branch_id' => $scope['branch_id']
+        ]);
+        $summary = $summaryStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $openingOutstanding = round((float)($supplier['opening_outstanding'] ?? 0), 2);
+        $purchaseTotal = round((float)($summary['purchase_total'] ?? 0), 2);
+        $purchasePaid = round((float)($summary['paid_amount'] ?? 0), 2);
+        $purchaseDue = round((float)($summary['due_amount'] ?? 0), 2);
+        $totalDue = round($openingOutstanding + $purchaseDue, 2);
+
+        $supplier['purchase_total'] = $purchaseTotal;
+        $supplier['purchase_paid'] = $purchasePaid;
+        $supplier['purchase_due'] = $purchaseDue;
+        $supplier['total_due'] = $totalDue;
+        $supplier['current_outstanding'] = $totalDue;
+        $supplier['total_purchases'] = (int)($summary['total_purchases'] ?? 0);
+
+        $purchaseStmt = $pdo->prepare("
+            SELECT
+                p.id,
+                p.bill_no,
+                p.batch_no,
+                p.purchase_date,
+                p.due_date,
+                p.sub_total,
+                p.discount_amount,
+                p.tax_amount,
+                p.round_off,
+                p.grand_total,
+                p.paid_amount,
+                p.due_amount,
+                p.status,
+                p.notes,
+                COUNT(pi.id) AS items_count
+            FROM purchases p
+            LEFT JOIN purchase_items pi
+                ON pi.purchase_id = p.id
+                AND pi.business_id = p.business_id
+                AND pi.branch_id = p.branch_id
+                AND pi.status = 1
+            WHERE p.supplier_id = :supplier_id
+            AND p.business_id = :business_id
+            AND p.branch_id = :branch_id
+            GROUP BY p.id
+            ORDER BY p.purchase_date DESC, p.id DESC
+            LIMIT 500
+        ");
+        $purchaseStmt->execute([
+            ':supplier_id' => $supplierId,
+            ':business_id' => $scope['business_id'],
+            ':branch_id' => $scope['branch_id']
+        ]);
+        $purchases = $purchaseStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $canSupplierPayment = supplierCan(17);
+        foreach ($purchases as &$purchase) {
+            $purchase['can_view'] = true;
+            $purchase['can_print'] = true;
+            $purchase['can_supplier_payment'] = $canSupplierPayment
+                && (float)($purchase['due_amount'] ?? 0) > 0
+                && (int)($purchase['status'] ?? 0) === 1;
+        }
+        unset($purchase);
+
+        jsonResponse(true, 'Supplier view loaded.', [
+            'supplier' => $supplier,
+            'purchases' => $purchases,
+            'summary' => [
+                'opening_outstanding' => $openingOutstanding,
+                'purchase_total' => $purchaseTotal,
+                'purchase_paid' => $purchasePaid,
+                'purchase_due' => $purchaseDue,
+                'total_due' => $totalDue,
+                'total_purchases' => (int)($summary['total_purchases'] ?? 0)
+            ],
+            'context' => [
+                'can_view' => supplierCan(1),
+                'can_list' => supplierCan(2),
+                'can_edit' => supplierCan(4),
+                'can_delete' => supplierCan(5),
+                'can_supplier_payment' => supplierCan(17),
+                'supplier_payment_url' => BASE_URL . 'pages/supplier-payments.php',
+                'purchase_view_url' => BASE_URL . 'pages/purchase-view.php'
+            ]
+        ]);
+    } catch (Exception $e) {
+        jsonResponse(false, $e->getMessage() ?: 'Unable to load supplier view.');
     }
 }
 

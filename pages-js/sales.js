@@ -2000,6 +2000,35 @@ function addOrUpdateSalesItem() {
         });
     }
 
+    function normalizeSalesItemForPayload(item) {
+        item = Object.assign({}, item || {});
+
+        let unitQty = parseFloat(item.unit_qty || 0);
+        let qtyPerUnit = parseFloat(item.qty_per_unit || 1);
+        if (qtyPerUnit <= 0) {
+            qtyPerUnit = 1;
+        }
+        let looseQty = parseFloat(item.loose_qty || 0);
+
+        /*
+         * IMPORTANT FIX:
+         * Screen total is already calculated in item.qty.
+         * Keep item.qty as final qty so API will not multiply again.
+         */
+        let qty = parseFloat(item.qty || item.entered_total_qty || 0);
+        if (qty <= 0) {
+            qty = (unitQty * qtyPerUnit) + looseQty;
+        }
+
+        item.unit_qty = unitQty;
+        item.qty_per_unit = qtyPerUnit;
+        item.loose_qty = looseQty;
+        item.qty = qty;
+        item.entered_total_qty = qty;
+
+        return item;
+    }
+
     function collectPayload() {
         syncPaymentsFromDom();
 
@@ -2024,7 +2053,7 @@ function addOrUpdateSalesItem() {
             customer_info: $('#customerInfo').text(),
             customer_zone_filter: $('#customerZoneFilter').val() || '',
             customer_object: selectedCustomer,
-            items: salesItems,
+            items: salesItems.map(normalizeSalesItemForPayload),
             payments: salesPayments
         };
     }

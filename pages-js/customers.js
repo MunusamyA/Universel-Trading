@@ -83,13 +83,13 @@ $(document).ready(function () {
                     loadZones();
                     loadCustomers();
                 } else {
-                    $('#customerTableBody').html('<tr><td colspan="8" class="text-center text-danger">' + escapeHtml(response.message || 'Permission denied.') + '</td></tr>');
+                    $('#customerTableBody').html('<tr><td colspan="11" class="text-center text-danger">' + escapeHtml(response.message || 'Permission denied.') + '</td></tr>');
                     $('#addCustomerBtn').addClass('d-none');
                 }
             },
             error: function (xhr) {
                 console.log(xhr.responseText);
-                $('#customerTableBody').html('<tr><td colspan="8" class="text-center text-danger">Server error.</td></tr>');
+                $('#customerTableBody').html('<tr><td colspan="11" class="text-center text-danger">Server error.</td></tr>');
                 $('#addCustomerBtn').addClass('d-none');
             }
         });
@@ -113,11 +113,11 @@ $(document).ready(function () {
 
     function loadCustomers() {
         if (!pageContext.can_view && !pageContext.can_list) {
-            $('#customerTableBody').html('<tr><td colspan="8" class="text-center text-danger">Permission denied.</td></tr>');
+            $('#customerTableBody').html('<tr><td colspan="11" class="text-center text-danger">Permission denied.</td></tr>');
             return;
         }
 
-        $('#customerTableBody').html('<tr><td colspan="8" class="text-center text-muted">Loading...</td></tr>');
+        $('#customerTableBody').html('<tr><td colspan="11" class="text-center text-muted">Loading...</td></tr>');
 
         $.ajax({
             url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
@@ -134,19 +134,19 @@ $(document).ready(function () {
                     renderCustomerRows(response.data.customers || []);
                     renderStats(response.data.stats || {});
                 } else {
-                    $('#customerTableBody').html('<tr><td colspan="8" class="text-center text-danger">' + escapeHtml(response.message || 'Unable to load customers.') + '</td></tr>');
+                    $('#customerTableBody').html('<tr><td colspan="11" class="text-center text-danger">' + escapeHtml(response.message || 'Unable to load customers.') + '</td></tr>');
                 }
             },
             error: function (xhr) {
                 console.log(xhr.responseText);
-                $('#customerTableBody').html('<tr><td colspan="8" class="text-center text-danger">Server error.</td></tr>');
+                $('#customerTableBody').html('<tr><td colspan="11" class="text-center text-danger">Server error.</td></tr>');
             }
         });
     }
 
     function renderCustomerRows(customers) {
         if (!customers || customers.length === 0) {
-            $('#customerTableBody').html('<tr><td colspan="8" class="text-center text-muted">No customers found.</td></tr>');
+            $('#customerTableBody').html('<tr><td colspan="11" class="text-center text-muted">No customers found.</td></tr>');
             return;
         }
 
@@ -155,8 +155,12 @@ $(document).ready(function () {
         $.each(customers, function (index, customer) {
             let actionHtml = '';
 
+            if (pageContext.can_view || pageContext.can_list) {
+                actionHtml += '<a class="btn btn-outline-info btn-sm" href="' + window.BASE_URL + 'pages/customer-view.php?id=' + customer.id + '" title="View Customer Sales"><i class="mdi mdi-eye"></i></a>';
+            }
+
             if (customer.can_receive_payment) {
-                actionHtml += '<a class="btn btn-outline-success btn-sm" href="' + window.BASE_URL + 'pages/customer-payments.php?customer_id=' + customer.id + '" title="Payment"><i class="mdi mdi-cash-plus"></i></a>';
+                actionHtml += '<a class="btn btn-outline-success btn-sm ms-1" href="' + window.BASE_URL + 'pages/customer-payments.php?customer_id=' + customer.id + '" title="Payment"><i class="mdi mdi-cash-plus"></i></a>';
             }
 
             if (customer.can_edit) {
@@ -186,7 +190,10 @@ $(document).ready(function () {
             html += '<small class="text-muted">' + escapeHtml(customer.email || '') + '</small>';
             html += '</td>';
             html += '<td>' + escapeHtml(customer.gst_number || '-') + '</td>';
-            html += '<td class="text-end"><strong>' + formatCurrency(customer.current_outstanding) + '</strong></td>';
+            html += '<td class="text-end"><strong>' + formatCurrency(customer.opening_balance || 0) + '</strong><br><small class="text-muted">Due: ' + formatCurrency(customer.opening_due || 0) + '</small></td>';
+            html += '<td class="text-end"><strong>' + formatCurrency(customer.overall_sales || 0) + '</strong></td>';
+            html += '<td class="text-end text-success"><strong>' + formatCurrency(customer.paid_amount || 0) + '</strong></td>';
+            html += '<td class="text-end text-danger"><strong>' + formatCurrency(customer.due_amount || 0) + '</strong></td>';
             html += '<td>' + statusBadge(customer.status) + '</td>';
             html += '<td class="text-end">' + actionHtml + '</td>';
             html += '</tr>';
@@ -226,7 +233,11 @@ $(document).ready(function () {
         $('#totalCustomersCount').text(stats.total_customers || 0);
         $('#activeCustomersCount').text(stats.active_customers || 0);
         $('#inactiveCustomersCount').text(stats.inactive_customers || 0);
-        $('#totalOutstandingAmount').text(formatCurrency(stats.total_outstanding || 0));
+        $('#totalOpeningBalanceAmount').text(formatCurrency(stats.total_opening_balance || 0));
+        $('#overallSalesAmount').text(formatCurrency(stats.total_overall_sales || 0));
+        $('#paidAmount').text(formatCurrency(stats.total_paid_amount || 0));
+        $('#dueAmount').text(formatCurrency(stats.total_due_amount || 0));
+        $('#totalOutstandingAmount').text(formatCurrency(stats.total_outstanding || stats.total_due_amount || 0));
     }
 
     function formatAddress(customer) {

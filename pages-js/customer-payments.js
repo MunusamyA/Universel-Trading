@@ -8,6 +8,12 @@ $(document).ready(function () {
     let paymentModes = [];
     let customerDueDocuments = [];
 
+    /*
+     * Auto-open payment modal only once when page is opened from sales payment icon.
+     * After save / cancel / refresh, only latest payment list should reload.
+     */
+    let autoOpenStoragePrefix = 'customer_payment_auto_opened_';
+
     let pageContext = {
         can_view: false,
         can_list: false,
@@ -23,32 +29,25 @@ $(document).ready(function () {
 
     loadPageContext();
 
-    $('#refreshPaymentListBtn').on('click', loadPaymentsList);
+    $('#refreshPaymentListBtn').on('click', function () {
+        loadPaymentsList();
+    });
 
     $('#paymentType').on('change', function () {
         $('#paymentTypeHidden').val($(this).val() || '');
         toggleIndividualDocumentBox();
+        applyPaymentTypeAmount(true);
     });
 
     $('#individualSalesSelect').on('change', function () {
         let saleId = parseInt($(this).val() || 0);
         $('#paymentSalesId').val(saleId || '');
 
-        let doc = customerDueDocuments.find(function (item) {
-            return parseInt(item.id) === saleId;
-        });
-
-        if (doc) {
-            $('#individualDocumentInfo').html(
-                escapeHtml(doc.document_label || 'Document') + ' ' +
-                escapeHtml(doc.sales_no || '') +
-                ' | Due: <strong>' + formatCurrency(doc.due_amount || 0) + '</strong>'
-            );
-
-            resetSplitRows(parseFloat(doc.due_amount || 0).toFixed(2));
-        } else {
-            $('#individualDocumentInfo').text('');
-        }
+        /*
+         * When document changes, Total Split Amount must immediately change
+         * to that selected document due amount.
+         */
+        applyPaymentTypeAmount(true);
     });
 
     $('#addSplitRowBtn').on('click', function () {
@@ -119,7 +118,7 @@ $(document).ready(function () {
             success: function (response) {
                 if (response.status === true) {
                     showPaymentToast('success', response.message || 'Payment cancelled.');
-                    loadPaymentPage();
+                    loadPaymentPage(false);
                 } else {
                     showPaymentToast('error', response.message || 'Unable to cancel payment.');
                 }
@@ -183,7 +182,7 @@ $(document).ready(function () {
                 if (response.status === true) {
                     showPaymentToast('success', response.message || 'Payment saved.');
                     paymentModal.hide();
-                    loadPaymentPage();
+                    loadPaymentPage(false);
                 } else {
                     showPaymentToast('error', response.message || 'Payment failed.');
                 }
@@ -208,7 +207,7 @@ $(document).ready(function () {
                 if (response.status === true) {
                     pageContext = response.data.context || pageContext;
                     applyPageContext();
-                    loadPaymentPage();
+                    loadPaymentPage(true);
                 } else {
                     $('#paymentsTableBody').html('<tr><td colspan="10" class="text-center text-danger">' + escapeHtml(response.message || 'Permission denied.') + '</td></tr>');
                     $('#newPaymentBtn').addClass('d-none');
@@ -246,7 +245,7 @@ $(document).ready(function () {
         }
     }
 
-    function loadPaymentPage() {
+    function loadPaymentPage(allowAutoOpen) {
         if (!pageContext.can_view && !pageContext.can_list) {
             $('#paymentsTableBody').html('<tr><td colspan="10" class="text-center text-danger">Permission denied.</td></tr>');
             return;
@@ -266,14 +265,25 @@ $(document).ready(function () {
                     paymentModes = response.data.payment_modes || [];
                     selectedCustomer = response.data.selected_customer || null;
                     selectedSale = response.data.selected_sale || null;
+                    syncSelectedIds();
 
                     renderPaymentModes();
                     renderHeaderCards();
                     renderSelectedSale();
-                    renderPayments(response.data.payments || []);
+
+                    /*
+                     * Initial page load should show latest payment list automatically.
+                     * Earlier it showed only payment_page_init payments; when the page
+                     * opened without customer_id, the list appeared only after Refresh.
+                     */
+                    if (pageContext.can_list) {
+                        loadPaymentsList();
+                    } else {
+                        renderPayments(response.data.payments || []);
+                    }
 
                     loadCustomerDueDocuments(function () {
-                        if (selectedSale && pageContext.can_receive_payment) {
+                        if (allowAutoOpen === true && shouldAutoOpenSelectedSalePayment()) {
                             openNewPaymentModal();
                         }
                     });
@@ -286,6 +296,61 @@ $(document).ready(function () {
                 showPaymentToast('error', 'Server error.');
             }
         });
+    }
+
+    function syncSelectedIds() {
+        if (selectedCustomer && selectedCustomer.id) {
+            $('#pageCustomerId').val(selectedCustomer.id);
+        }
+
+        if (selectedSale && selectedSale.id) {
+            $('#pageSalesId').val(selectedSale.id);
+        }
+    }
+
+    function getActiveCustomerId() {
+        if (selectedCustomer && selectedCustomer.id) {
+            return parseInt(selectedCustomer.id || 0);
+        }
+
+        if (selectedSale && selectedSale.customer_id) {
+            return parseInt(selectedSale.customer_id || 0);
+        }
+
+        return parseInt($('#pageCustomerId').val() || 0);
+    }
+
+    function getActiveSalesId() {
+        if (selectedSale && selectedSale.id) {
+            return parseInt(selectedSale.id || 0);
+        }
+
+        return parseInt($('#pageSalesId').val() || 0);
+    }
+
+    function shouldAutoOpenSelectedSalePayment() {
+        if (!selectedSale || !pageContext.can_receive_payment) {
+            return false;
+        }
+
+        let salesId = getActiveSalesId();
+        if (salesId <= 0) {
+            return false;
+        }
+
+        let key = autoOpenStoragePrefix + salesId;
+
+        try {
+            if (window.sessionStorage && sessionStorage.getItem(key) === '1') {
+                return false;
+            }
+
+            if (window.sessionStorage) {
+                sessionStorage.setItem(key, '1');
+            }
+        } catch (e) {}
+
+        return true;
     }
 
     function loadPaymentsList() {
@@ -302,7 +367,8 @@ $(document).ready(function () {
             dataType: 'json',
             data: {
                 action: 'list_customer_payments',
-                customer_id: $('#pageCustomerId').val() || 0,
+                customer_id: getActiveCustomerId(),
+                sales_id: getActiveSalesId(),
                 search: $('#paymentSearch').val() || ''
             },
             success: function (response) {
@@ -381,6 +447,99 @@ $(document).ready(function () {
         });
 
         $('#individualSalesSelect').html(html);
+    }
+
+    function getSelectedPaymentDocument() {
+        let saleId = parseInt($('#individualSalesSelect').val() || $('#paymentSalesId').val() || 0);
+
+        if (saleId <= 0) {
+            return null;
+        }
+
+        let doc = (customerDueDocuments || []).find(function (item) {
+            return parseInt(item.id || 0) === saleId;
+        });
+
+        if (!doc && selectedSale && parseInt(selectedSale.id || 0) === saleId) {
+            doc = selectedSale;
+        }
+
+        return doc || null;
+    }
+
+    function applyPaymentTypeAmount(resetRows) {
+        let type = parseInt($('#paymentType').val() || 0);
+        let amount = 0;
+
+        /*
+         * This function keeps Total Split Amount in sync when payment type changes:
+         * 1 = selected individual document due
+         * 2 = opening due + sales due
+         * 3 = opening due only
+         */
+        if (type === 1) {
+            let doc = getSelectedPaymentDocument();
+
+            if (doc) {
+                amount = parseFloat(doc.due_amount || 0);
+
+                $('#paymentSalesId').val(doc.id || '');
+                $('#individualSalesSelect').val(String(doc.id || ''));
+                $('#individualDocumentInfo').html(
+                    escapeHtml(doc.document_label || 'Document') + ' ' +
+                    escapeHtml(doc.sales_no || '') +
+                    ' | Due: <strong>' + formatCurrency(amount) + '</strong>'
+                );
+
+                $('#paymentInfoBox').html(
+                    '<strong>Individual Document Payment:</strong> ' +
+                    escapeHtml(doc.document_label || 'Document') + ' ' +
+                    escapeHtml(doc.sales_no || '') +
+                    ' | Due: <strong>' + formatCurrency(amount) + '</strong>'
+                );
+            } else {
+                $('#paymentSalesId').val('');
+                $('#individualDocumentInfo').text('');
+                $('#paymentInfoBox').html('Select particular document to receive payment.');
+            }
+        } else if (type === 2) {
+            let openingDue = selectedCustomer ? parseFloat(selectedCustomer.opening_due || 0) : 0;
+            let salesDue = selectedCustomer ? parseFloat(selectedCustomer.sales_due || 0) : 0;
+
+            amount = openingDue + salesDue;
+
+            $('#paymentSalesId').val('');
+            $('#individualSalesSelect').val('');
+            $('#individualDocumentInfo').text('');
+
+            $('#paymentInfoBox').html(
+                '<strong>Overall FIFO Payment:</strong> Opening Due ' +
+                formatCurrency(openingDue) + ' + Sales Due ' + formatCurrency(salesDue) +
+                ' = <strong>' + formatCurrency(amount) + '</strong>'
+            );
+        } else if (type === 3) {
+            amount = selectedCustomer ? parseFloat(selectedCustomer.opening_due || 0) : 0;
+
+            $('#paymentSalesId').val('');
+            $('#individualSalesSelect').val('');
+            $('#individualDocumentInfo').text('');
+
+            $('#paymentInfoBox').html(
+                '<strong>Opening Balance Payment:</strong> Opening Due <strong>' +
+                formatCurrency(amount) + '</strong>'
+            );
+        }
+
+        amount = amount > 0 ? amount : 0;
+
+        if (resetRows === true) {
+            resetSplitRows(amount > 0 ? amount.toFixed(2) : '');
+        } else {
+            recalculateSplitTotal();
+        }
+
+        $('#paymentAmount').val(amount.toFixed(2));
+        $('#splitTotalText').text(formatCurrency(amount));
     }
 
     function toggleIndividualDocumentBox() {

@@ -294,8 +294,12 @@ $(document).ready(function () {
         /*
          * Common row buttons are controlled by the row document type.
          */
-        if (row.can_view || row.can_edit || docPermission(docType, 'view') || docPermission(docType, 'edit')) {
-            html += '<a class="btn btn-outline-primary" href="' + window.BASE_URL + 'pages/sales.php?id=' + id + '&mode=edit" title="Edit / View"><i class="mdi mdi-pencil"></i></a>';
+        if (row.can_view || row.can_list || docPermission(docType, 'view') || docPermission(docType, 'list')) {
+            html += '<a class="btn btn-outline-info" href="' + window.BASE_URL + 'pages/sales-view.php?id=' + id + '" title="View"><i class="mdi mdi-eye"></i></a>';
+        }
+
+        if (!closed && (row.can_edit || docPermission(docType, 'edit'))) {
+            html += '<a class="btn btn-outline-primary" href="' + window.BASE_URL + 'pages/sales.php?id=' + id + '&mode=edit" title="Edit"><i class="mdi mdi-pencil"></i></a>';
         }
 
         if (!closed && dueAmount > 0 && (row.can_receive_payment || docPermission(docType, 'receive_payment'))) {

@@ -130,7 +130,7 @@ $page_title = 'Suppliers | Universal ERP';
                                         <th>Bank</th>
                                         <th>Outstanding</th>
                                         <th>Status</th>
-                                        <th width="170">Action</th>
+                                        <th width="220">Action</th>
                                     </tr>
                                 </thead>
 
