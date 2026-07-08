@@ -844,4 +844,4 @@ function saveRolePermissions(PDO $pdo, $roleId, $permissions)
         $params = array_merge([$roleId], $uncheckedMenuIds);
         $disableStmt->execute($params);
     }
-}123
+}
