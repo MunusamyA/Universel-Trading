@@ -3,6 +3,8 @@ $(document).ready(function () {
 
     let currentBusinessId = null;
     let currentBranchId = null;
+    let currentIsPlatform = false;
+    let currentShowOperations = true;
     let areaChart = null;
     let donutChart = null;
     let barChart = null;
@@ -49,11 +51,22 @@ $(document).ready(function () {
         context = context || {};
         currentBusinessId = parseInt(context.business_id || 0, 10);
         currentBranchId = parseInt(context.branch_id || 0, 10);
+        currentIsPlatform = parseInt(context.is_platform || 0, 10) === 1;
+        currentShowOperations = parseInt(context.show_operations || 0, 10) === 1;
+
+        if (currentShowOperations) {
+            $('.business-only-action').removeClass('d-none');
+            $('#quickActionsCardWrap, #topDueCustomersCardWrap, #recentSalesCardWrap').removeClass('d-none');
+        } else {
+            $('.business-only-action').addClass('d-none');
+            $('#quickActionsCardWrap, #topDueCustomersCardWrap, #recentSalesCardWrap').addClass('d-none');
+            $('#recentSalesTable').html('');
+        }
 
         let scopeName = context.scope_name || context.branch_name || context.business_name || 'Dashboard';
         $('#dashboardBranchName').text(scopeName);
 
-        if (parseInt(context.can_switch_business || 0, 10) === 1) {
+        if (!currentIsPlatform && parseInt(context.can_switch_business || 0, 10) === 1) {
             let businessOptions = '';
             (context.businesses || []).forEach(function (business) {
                 let businessId = parseInt(business.id || 0, 10);
@@ -61,13 +74,14 @@ $(document).ready(function () {
                 businessOptions += '<option value="' + businessId + '"' + selected + '>' + escapeHtml(business.label) + '</option>';
             });
 
-            $('#dashboardBusinessSelect').html(businessOptions || '<option value="0">Platform Overall - All Businesses</option>');
+            $('#dashboardBusinessSelect').html(businessOptions);
             $('#dashboardBusinessWrap').removeClass('d-none');
         } else {
+            $('#dashboardBusinessSelect').html('');
             $('#dashboardBusinessWrap').addClass('d-none');
         }
 
-        if (parseInt(context.can_switch_branch || 0, 10) === 1 && (context.branches || []).length > 0) {
+        if (!currentIsPlatform && parseInt(context.can_switch_branch || 0, 10) === 1 && (context.branches || []).length > 0) {
             let branchOptions = '';
             (context.branches || []).forEach(function (branch) {
                 let branchId = parseInt(branch.id || 0, 10);
@@ -255,6 +269,12 @@ $(document).ready(function () {
     function renderListRows(target, rows, type) {
         let html = '';
 
+        if (currentIsPlatform && type === 'due') {
+            $(target).html('');
+            $('#topDueCustomersCardWrap').addClass('d-none');
+            return;
+        }
+
         if (!rows || !rows.length) {
             html = '<p class="text-muted py-3 mb-0">No data found.</p>';
             $(target).html(html);
@@ -281,6 +301,12 @@ $(document).ready(function () {
     function renderQuickLinks(rows) {
         let html = '';
 
+        if (!currentShowOperations) {
+            $('#quickActions').html('');
+            $('#quickActionsCardWrap').addClass('d-none');
+            return;
+        }
+
         (rows || []).forEach(function (link) {
             html += '<a href="' + window.BASE_URL + escapeHtml(link.url) + '" class="btn ' + escapeHtml(link.class) + ' quick-btn">' +
                 '<i class="' + escapeHtml(link.icon) + ' font-size-22"></i>' +
@@ -294,12 +320,24 @@ $(document).ready(function () {
     function renderRecentSales(rows) {
         let html = '';
 
+        if (!currentShowOperations) {
+            $('#recentSalesCardWrap').addClass('d-none');
+            $('#recentSalesTable').html('');
+            return;
+        }
+
         if (!rows || !rows.length) {
             $('#recentSalesTable').html('<tr><td colspan="7" class="text-center text-muted py-4">No sales documents found.</td></tr>');
             return;
         }
 
         rows.forEach(function (row) {
+            let actionHtml = '<span class="text-muted small">View only</span>';
+            if (currentShowOperations) {
+                actionHtml = '<a class="btn btn-sm btn-outline-primary" href="' + window.BASE_URL + 'pages/sales.php?id=' + parseInt(row.id, 10) + '&mode=edit" title="Edit"><i class="mdi mdi-pencil"></i></a> ' +
+                    '<a class="btn btn-sm btn-outline-danger" target="_blank" href="' + window.BASE_URL + 'pages/sales-print.php?id=' + parseInt(row.id, 10) + '&print=1" title="Print"><i class="mdi mdi-file-pdf-box"></i></a>';
+            }
+
             html += '<tr>' +
                 '<td><strong>' + escapeHtml(row.sales_no) + '</strong></td>' +
                 '<td><span class="badge badge-soft">' + escapeHtml(row.document_label) + '</span></td>' +
@@ -307,10 +345,7 @@ $(document).ready(function () {
                 '<td>' + escapeHtml(row.sales_date) + '</td>' +
                 '<td class="text-end">' + money(row.grand_total) + '</td>' +
                 '<td class="text-end text-danger">' + money(row.due_amount) + '</td>' +
-                '<td class="text-center">' +
-                    '<a class="btn btn-sm btn-outline-primary" href="' + window.BASE_URL + 'pages/sales.php?id=' + parseInt(row.id, 10) + '&mode=edit" title="Edit"><i class="mdi mdi-pencil"></i></a> ' +
-                    '<a class="btn btn-sm btn-outline-danger" target="_blank" href="' + window.BASE_URL + 'pages/sales-print.php?id=' + parseInt(row.id, 10) + '&print=1" title="Print"><i class="mdi mdi-file-pdf-box"></i></a>' +
-                '</td>' +
+                '<td class="text-center">' + actionHtml + '</td>' +
                 '</tr>';
         });
 

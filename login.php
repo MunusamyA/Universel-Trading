@@ -31,30 +31,12 @@ $base_url = "";
                     <div class="card">
                         <div class="card-body">
 
-                            <div class="text-center mt-4">
-                                <div class="mb-3">
-                                    <a href="javascript:void(0);" class="auth-logo">
-                                        <img src="assets/images/logo-dark.png"
-                                             height="30"
-                                             class="logo-dark mx-auto"
-                                             alt="Logo">
-
-                                        <img src="assets/images/logo-light.png"
-                                             height="30"
-                                             class="logo-light mx-auto"
-                                             alt="Logo">
-                                    </a>
-                                </div>
-                            </div>
 
                             <div class="p-3">
                                 <h4 class="font-size-18 text-muted mt-2 text-center">
                                     Welcome Back!
                                 </h4>
 
-                                <p class="text-muted text-center mb-4">
-                                    Sign in to continue to Universal ERP.
-                                </p>
 
                                 <form class="form-horizontal" id="loginForm" autocomplete="off">
 
@@ -122,7 +104,7 @@ $base_url = "";
                         </div>
                     </div>
 
-                    <div class="mt-5 text-center">
+                    <!-- <div class="mt-5 text-center">
                         <p>
                             Don't have an account?
                             <a href="register.php" class="fw-bold text-primary">
@@ -134,7 +116,7 @@ $base_url = "";
                             © <script>document.write(new Date().getFullYear())</script>
                             Universal ERP
                         </p>
-                    </div>
+                    </div> -->
 
                 </div>
             </div>

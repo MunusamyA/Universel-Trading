@@ -299,38 +299,35 @@ $requestedBranchId = isset($_POST['branch_id'])
     ? (int)$_POST['branch_id']
     : (isset($_GET['branch_id']) ? (int)$_GET['branch_id'] : ($isPlatformOwnerDashboard ? 0 : $assignedBranchId));
 
-$businesses = $isPlatformOwnerDashboard ? dashboardLoadBusinesses($pdo) : [];
-$businessId = $isPlatformOwnerDashboard ? max(0, $requestBusinessId) : $sessionBusinessId;
+/*
+ * Platform Owner dashboard must stay as platform-only.
+ * Do not allow selecting a business/customer/branch context from here.
+ */
+$businesses = [];
+$businessId = $isPlatformOwnerDashboard ? 0 : $sessionBusinessId;
 $activeBusinessName = $isPlatformOwnerDashboard
-    ? dashboardBusinessNameFromRows($businesses, $businessId)
+    ? 'Platform Overall'
     : ($_SESSION['business_name'] ?? ($_SESSION['company_name'] ?? 'Business'));
 
-$canSwitch = $isPlatformOwnerDashboard || canSwitchDashboardBranch($pdo, $sessionBusinessId, $assignedBranchId);
+$canSwitch = $isPlatformOwnerDashboard ? false : canSwitchDashboardBranch($pdo, $sessionBusinessId, $assignedBranchId);
 $branches = [];
 $branchId = 0;
 $activeBranchName = 'Platform Overall';
 $isOverall = false;
 
 if ($isPlatformOwnerDashboard) {
-    if ($businessId > 0) {
-        $branches = dashboardLoadBranches($pdo, $businessId);
-        $branchId = 0;
-        $activeBranchName = $activeBusinessName . ' - All Branches';
-
-        if ($requestedBranchId > 0) {
-            foreach ($branches as $branch) {
-                if ((int)$branch['id'] === $requestedBranchId) {
-                    $branchId = (int)$branch['id'];
-                    $activeBranchName = $branch['branch_name'];
-                    break;
-                }
-            }
-        }
-    } else {
-        $isOverall = true;
-        $branchId = 0;
-        $activeBranchName = 'Platform Overall - All Businesses';
-    }
+    /*
+     * Platform Owner dashboard is a high-level overview only.
+     * Do not switch into branch/customer operational mode here.
+     * Sales invoice/new sale/customer actions need a selected business login/branch session,
+     * so Platform Owner always sees overall business/platform data.
+     */
+    $branchId = 0;
+    $branches = [];
+    $businessId = 0;
+    $isOverall = true;
+    $activeBusinessName = 'Platform Overall';
+    $activeBranchName = 'Platform Overall - All Businesses';
 } else {
     $businessId = $sessionBusinessId;
     $branchId = $assignedBranchId;
@@ -505,15 +502,18 @@ foreach ($pipeline as $info) {
     $totalPipelineCount += (int)$info['count'];
 }
 
-$recentSales = $hasSales ? dashRows($pdo, "
-    SELECT s.id, s.sales_no, s.document_type, s.sales_date, s.grand_total, s.due_amount, c.customer_name
-    FROM sales s
-    LEFT JOIN customers c ON c.id = s.customer_id
-    WHERE $scopeSqlS
-      AND s.status IN (1,2)
-    ORDER BY s.id DESC
-    LIMIT 8
-", $scope) : [];
+$recentSales = [];
+if (!$isPlatformOwnerDashboard && $hasSales) {
+    $recentSales = dashRows($pdo, "
+        SELECT s.id, s.sales_no, s.document_type, s.sales_date, s.grand_total, s.due_amount, c.customer_name
+        FROM sales s
+        LEFT JOIN customers c ON c.id = s.customer_id
+        WHERE $scopeSqlS
+          AND s.status IN (1,2)
+        ORDER BY s.id DESC
+        LIMIT 8
+    ", $scope);
+}
 
 $topDueCustomers = $hasCustomers ? dashRows($pdo, "
     SELECT customer_name, mobile, current_outstanding
@@ -591,7 +591,7 @@ foreach ($pipeline as $type => $info) {
     $chartDocCounts[] = (int)$info['count'];
 }
 
-$quickLinks = [
+$quickLinks = $isPlatformOwnerDashboard ? [] : [
     ['label' => 'New Sale', 'url' => 'pages/sales.php', 'icon' => 'mdi mdi-cart-plus', 'class' => 'btn-primary'],
     ['label' => 'Sales List', 'url' => 'pages/sales-list.php', 'icon' => 'mdi mdi-format-list-bulleted', 'class' => 'btn-info'],
     ['label' => 'Products', 'url' => 'pages/products.php', 'icon' => 'mdi mdi-package-variant-closed', 'class' => 'btn-success'],
@@ -599,27 +599,9 @@ $quickLinks = [
 ];
 
 $responseBusinesses = [];
-if ($isPlatformOwnerDashboard) {
-    $responseBusinesses[] = [
-        'id' => 0,
-        'label' => 'Platform Overall - All Businesses'
-    ];
-
-    foreach ($businesses as $business) {
-        $label = $business['business_name'] ?? ('Business #' . (int)$business['id']);
-        if (!empty($business['business_code'])) {
-            $label .= ' (' . $business['business_code'] . ')';
-        }
-
-        $responseBusinesses[] = [
-            'id' => (int)$business['id'],
-            'label' => $label
-        ];
-    }
-}
 
 $responseBranches = [];
-if ($canSwitch && (!$isPlatformOwnerDashboard || $businessId > 0)) {
+if (!$isPlatformOwnerDashboard && $canSwitch) {
     $responseBranches[] = [
         'id' => 0,
         'label' => $isPlatformOwnerDashboard ? ($activeBusinessName . ' - All Branches') : 'Overall - All Branches'
@@ -648,9 +630,10 @@ jsonResponse(true, 'Dashboard loaded successfully.', [
         'branch_name' => $activeBranchName,
         'scope_name' => $activeBranchName,
         'is_overall' => ($isOverall || $branchId === 0) ? 1 : 0,
-        'can_switch_business' => $isPlatformOwnerDashboard ? 1 : 0,
-        'can_switch_branch' => $canSwitch ? 1 : 0,
-        'businesses' => $responseBusinesses,
+        'can_switch_business' => 0,
+        'can_switch_branch' => (!$isPlatformOwnerDashboard && $canSwitch) ? 1 : 0,
+        'show_operations' => $isPlatformOwnerDashboard ? 0 : 1,
+        'businesses' => [],
         'branches' => $responseBranches
     ],
     'metrics' => [
@@ -701,7 +684,7 @@ jsonResponse(true, 'Dashboard loaded successfully.', [
             'customer_name' => $row['customer_name'] ?: 'Walk-in Customer'
         ];
     }, $recentSales),
-    'topDueCustomers' => array_map(function ($row) {
+    'topDueCustomers' => $isPlatformOwnerDashboard ? [] : array_map(function ($row) {
         return [
             'customer_name' => $row['customer_name'],
             'mobile' => $row['mobile'] ?? '',

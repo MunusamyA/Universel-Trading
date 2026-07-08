@@ -172,7 +172,7 @@ $page_title = 'Dashboard | Universal Trading';
                                         <i class="mdi mdi-refresh me-1"></i> Refresh
                                     </button>
 
-                                    <a href="<?= BASE_URL; ?>pages/sales.php" class="btn btn-primary">
+                                    <a href="<?= BASE_URL; ?>pages/sales.php" class="btn btn-primary business-only-action" id="dashboardNewSaleBtn">
                                         <i class="mdi mdi-cart-plus me-1"></i> New Sale
                                     </a>
                                 </div>
@@ -319,7 +319,7 @@ $page_title = 'Dashboard | Universal Trading';
                     </div>
 
                     <div class="row g-3 mt-1">
-                        <div class="col-xl-4">
+                        <div class="col-xl-4" id="quickActionsCardWrap">
                             <div class="card dashboard-card">
                                 <div class="card-body">
                                     <h5 class="chart-card-title">Quick Actions</h5>
@@ -329,7 +329,7 @@ $page_title = 'Dashboard | Universal Trading';
                             </div>
                         </div>
 
-                        <div class="col-xl-4">
+                        <div class="col-xl-4" id="topDueCustomersCardWrap">
                             <div class="card dashboard-card">
                                 <div class="card-body">
                                     <h5 class="chart-card-title">Top Due Customers</h5>
@@ -350,14 +350,14 @@ $page_title = 'Dashboard | Universal Trading';
                         </div>
                     </div>
 
-                    <div class="card dashboard-card mt-1">
+                    <div class="card dashboard-card mt-1" id="recentSalesCardWrap">
                         <div class="card-body">
                             <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
                                 <div>
                                     <h5 class="chart-card-title">Recent Sales Documents</h5>
                                     <p class="chart-card-subtitle">Latest quotation, proforma, sales bill and invoice entries</p>
                                 </div>
-                                <a href="<?= BASE_URL; ?>pages/sales-list.php" class="btn btn-sm btn-light">View All</a>
+                                <a href="<?= BASE_URL; ?>pages/sales-list.php" class="btn btn-sm btn-light business-only-action" id="recentSalesViewAllBtn">View All</a>
                             </div>
 
                             <div class="table-responsive">
