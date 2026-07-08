@@ -17,6 +17,10 @@ $(document).ready(function () {
         list_url: ''
     };
 
+    $('#quick_gst_type').val('2');
+    $('#quick_discount_type').val('2');
+    syncQuickSecondaryUnitFields();
+
     loadPageContext();
 
     $('#productSearchInput').on('focus click', function () {
@@ -26,6 +30,10 @@ $(document).ready(function () {
     $('#productSearchInput').on('input', function () {
         $('#productSelect').val('');
         showProductSuggestions($(this).val());
+    });
+
+    $('#clearProductSearchBtn').on('click', function () {
+        clearProductSearch();
     });
 
     $(document).on('mousedown click', '.product-suggestion-item', function (e) {
@@ -75,6 +83,12 @@ $(document).ready(function () {
     });
 
     $(document).on('input change', '.quick-product-calc', function () {
+        syncQuickSecondaryUnitFields();
+        calculateQuickProductPrice();
+    });
+
+    $('#quickProductModal').on('shown.bs.modal', function () {
+        syncQuickSecondaryUnitFields();
         calculateQuickProductPrice();
     });
 
@@ -580,9 +594,11 @@ $(document).ready(function () {
 
 
     function calculateQuickProductPrice() {
+        syncQuickSecondaryUnitFields();
+
         let stockPrice = parseFloat($('#quick_cost_price').val() || 0);
         let mrp = parseFloat($('#quick_enter_mrp').val() || 0);
-        let discountType = parseInt($('#quick_discount_type').val() || 1);
+        let discountType = parseInt($('#quick_discount_type').val() || 2);
         let discountValue = parseFloat($('#quick_discount_value').val() || 0);
 
         let discountAmount = discountType === 1 ? (mrp * discountValue / 100) : discountValue;
@@ -596,16 +612,16 @@ $(document).ready(function () {
         let retailMarkupAmount = retailMarkupType === 1 ? (stockPrice * retailMarkupValue / 100) : retailMarkupValue;
         let retailPrice = stockPrice + retailMarkupAmount;
 
-        if (parseFloat($('#quick_retail_price').val() || 0) <= 0) {
+        if (stockPrice > 0 && (parseFloat($('#quick_retail_price').val() || 0) <= 0 || $(document.activeElement).is('#quick_cost_price,#quick_retail_markup_type,#quick_retail_markup_value'))) {
             $('#quick_retail_price').val(retailPrice.toFixed(2));
         }
 
         $('#quick_product_calc_info').html(
-            'Final MRP = ₹' + finalMrp.toFixed(2) +
-            ' | Retail Markup Amount = ₹' + retailMarkupAmount.toFixed(2)
+            'Purchase Price: ₹' + stockPrice.toFixed(2) +
+            ' | Final MRP: ₹' + finalMrp.toFixed(2) +
+            ' | Retail Markup: ₹' + retailMarkupAmount.toFixed(2)
         );
     }
-
 
     function saveQuickProduct() {
         if (!pageContext.can_add) {
@@ -626,9 +642,12 @@ $(document).ready(function () {
                     $('#quickProductModal').modal('hide');
                     $('#quickProductForm')[0].reset();
                     $('#quick_base_unit').val('Piece');
-                    $('#quick_box_label').val('Box');
-                    $('#quick_default_pieces_per_box').val('1.0000');
-                    $('#quick_secondary_unit_value').val('1.0000');
+                    $('#quick_gst_type').val('2');
+                    $('#quick_discount_type').val('2');
+                    $('#quick_enable_secondary_unit').prop('checked', false);
+                    $('#quick_secondary_unit_label').val('');
+                    $('#quick_secondary_unit_value').val('');
+                    syncQuickSecondaryUnitFields();
                     $('#quick_expire_days').val('0');
                     $('#quick_status').val('1');
                     calculateQuickProductPrice();
@@ -648,48 +667,72 @@ $(document).ready(function () {
         });
     }
 
-    function buildPurchaseUnitOptions(product) {
-        let baseUnit = product.base_unit || 'Piece';
-        let boxLabel = product.box_label || 'Box';
-        let piecesPerBox = parseFloat(product.default_pieces_per_box || product.pieces_per_box || 1);
-        let secondaryLabel = product.secondary_unit_label || '';
-        let secondaryValue = parseFloat(product.secondary_unit_value || 1);
-
-        let options = [];
-        options.push({ label: baseUnit, conversion: 1 });
-
-        if (boxLabel !== '' && piecesPerBox > 1) {
-            options.push({ label: boxLabel, conversion: piecesPerBox });
-        }
-
-        if (secondaryLabel !== '' && secondaryValue > 1) {
-            options.push({ label: secondaryLabel, conversion: secondaryValue });
-        }
-
-        return options;
+    function productHasSecondaryUnit(product) {
+        let value = parseFloat(product.secondary_unit_value || product.default_pieces_per_box || product.pieces_per_box || 0);
+        return value > 1;
     }
 
-    function renderPurchaseUnitOptions(product) {
-        let baseUnit = product.base_unit || 'Piece';
-        let secondaryLabel = product.secondary_unit_label || '';
-        let secondaryValue = parseFloat(product.secondary_unit_value || 1);
+    function getProductSecondaryLabel(product) {
+        return $.trim(product.secondary_unit_label || product.box_label || 'Box');
+    }
 
-        if (secondaryLabel !== '' && secondaryValue > 0) {
-            $('#pre_unit_label').val(secondaryLabel);
-            $('#pre_unit_conversion').val(secondaryValue.toFixed(4));
+    function getProductSecondaryValue(product) {
+        let value = parseFloat(product.secondary_unit_value || product.default_pieces_per_box || product.pieces_per_box || 1);
+        return value > 0 ? value : 1;
+    }
+
+    function getProductPurchaseRate(product) {
+        let rate = parseFloat(product.cost_price || 0);
+        if (rate <= 0) {
+            rate = parseFloat(product.purchase_price || 0);
+        }
+        return rate > 0 ? rate : 0;
+    }
+
+    function togglePreSecondaryUnit(enabled) {
+        enabled = !!enabled;
+
+        if (enabled) {
+            $('.pre-secondary-unit-field').removeClass('d-none');
+            $('#preLoosePieceQtyLabel').text('Loose Piece Qty');
+            $('#pre_unit_conversion').prop('readonly', false);
         } else {
-            $('#pre_unit_label').val(baseUnit);
+            $('.pre-secondary-unit-field').addClass('d-none');
+            $('#preLoosePieceQtyLabel').text('Piece Qty');
+            $('#pre_box_qty').val('0');
             $('#pre_unit_conversion').val('1.0000');
         }
 
         calculateMixedBoxPieceQty();
     }
 
+    function renderPurchaseUnitOptions(product) {
+        let baseUnit = product.base_unit || 'Piece';
+        let hasSecondary = productHasSecondaryUnit(product);
+        let secondaryLabel = getProductSecondaryLabel(product);
+        let secondaryValue = getProductSecondaryValue(product);
+
+        if (hasSecondary) {
+            $('#pre_unit_label').val(secondaryLabel);
+            $('#pre_box_label').val(secondaryLabel);
+            $('#pre_pieces_per_box').val(secondaryValue.toFixed(4));
+            $('#pre_unit_conversion').val(secondaryValue.toFixed(4));
+        } else {
+            $('#pre_unit_label').val(baseUnit);
+            $('#pre_box_label').val('');
+            $('#pre_pieces_per_box').val('1.0000');
+            $('#pre_unit_conversion').val('1.0000');
+        }
+
+        togglePreSecondaryUnit(hasSecondary);
+    }
+
     function calculateMixedBoxPieceQty() {
-        let boxQty = parseFloat($('#pre_box_qty').val() || 0);
+        let hasSecondary = !$('.pre-secondary-unit-field').first().hasClass('d-none');
+        let boxQty = hasSecondary ? parseFloat($('#pre_box_qty').val() || 0) : 0;
         let loosePieceQty = parseFloat($('#pre_loose_piece_qty').val() || 0);
         let freeQty = parseFloat($('#pre_free_qty').val() || 0);
-        let piecesPerBox = parseFloat($('#pre_unit_conversion').val() || 1);
+        let piecesPerBox = hasSecondary ? parseFloat($('#pre_unit_conversion').val() || 1) : 1;
 
         if (piecesPerBox <= 0) piecesPerBox = 1;
 
@@ -698,8 +741,37 @@ $(document).ready(function () {
         return totalPieces;
     }
 
+    function clearProductSearch() {
+        $('#productSelect').val('');
+        $('#productSearchInput').val('');
+        $('#productSuggestionBox').addClass('d-none').empty();
+        clearSelectedProductBox();
+        setTimeout(function () {
+            $('#productSearchInput').focus();
+        }, 50);
+    }
 
+    function syncQuickSecondaryUnitFields() {
+        let enabled = $('#quick_enable_secondary_unit').is(':checked');
 
+        if (enabled) {
+            $('.quick-secondary-unit-fields').removeClass('d-none');
+            if ($('#quick_secondary_unit_label').val() === '') {
+                $('#quick_secondary_unit_label').val('Box');
+            }
+            if (parseFloat($('#quick_secondary_unit_value').val() || 0) <= 0) {
+                $('#quick_secondary_unit_value').val('1.0000');
+            }
+            $('#quick_box_label').val($('#quick_secondary_unit_label').val() || 'Box');
+            $('#quick_default_pieces_per_box').val(parseFloat($('#quick_secondary_unit_value').val() || 1).toFixed(4));
+        } else {
+            $('.quick-secondary-unit-fields').addClass('d-none');
+            $('#quick_secondary_unit_label').val('');
+            $('#quick_secondary_unit_value').val('');
+            $('#quick_box_label').val('');
+            $('#quick_default_pieces_per_box').val('1.0000');
+        }
+    }
 
     function showProductSuggestions(keyword) {
         if (productList.length === 0) {
@@ -877,7 +949,7 @@ $(document).ready(function () {
         applySelectedHsn(product.hsn_id || 0);
         $('#pre_base_unit').val(product.base_unit || 'Piece');
         $('#pre_box_label').val(product.box_label || 'Box');
-        $('#pre_pieces_per_box').val(parseFloat(product.default_pieces_per_box || 1));
+        $('#pre_pieces_per_box').val(parseFloat(product.secondary_unit_value || product.default_pieces_per_box || 1));
 
         $('#selectedProductTitle').text((product.product_name || '') + (product.product_code ? ' - ' + product.product_code : ''));
 
@@ -888,14 +960,14 @@ $(document).ready(function () {
         $('#pre_free_qty').val('0');
         $('#pre_qty').val('0');
         renderPurchaseUnitOptions(product);
-        $('#pre_purchase_price').val('');
-        $('#pre_discount_type').val('1');
+        $('#pre_purchase_price').val(getProductPurchaseRate(product).toFixed(2));
+        $('#pre_discount_type').val('2');
         $('#pre_discount_value').val('0.00');
-        $('#pre_gst_type').val(product.gst_type || '2');
+        $('#pre_gst_type').val('2');
         
         $('#pre_mrp').val(parseFloat(product.final_mrp || product.enter_mrp || 0).toFixed(2));
-        $('#pre_retail_price').val('0.00');
-        $('#pre_expiry_days').val('0');
+        $('#pre_retail_price').val(parseFloat(product.retail_price || 0).toFixed(2));
+        $('#pre_expiry_days').val(parseInt(product.expire_days || 0));
         $('#pre_expiry_date').val('');
 
         $('#selectedProductBox').removeClass('d-none');
@@ -942,12 +1014,14 @@ $(document).ready(function () {
             pieces_per_box: parseFloat($('#pre_pieces_per_box').val() || 1),
             expiry_days: parseInt($('#pre_expiry_days').val() || 0),
             expiry_date: $('#pre_expiry_date').val(),
-            unit_label: 'Piece',
+            unit_label: $('.pre-secondary-unit-field').first().hasClass('d-none') ? ($('#pre_base_unit').val() || 'Piece') : ($('#pre_unit_label').val() || 'Box'),
+            box_qty: boxQty,
+            loose_piece_qty: loosePieceQty,
             qty: qty,
             free_qty: parseFloat($('#pre_free_qty').val() || 0),
             unit_conversion: unitConversion,
             purchase_price: purchasePrice,
-            discount_type: parseInt($('#pre_discount_type').val() || 1),
+            discount_type: parseInt($('#pre_discount_type').val() || 2),
             discount_value: parseFloat($('#pre_discount_value').val() || 0),
             gst_type: parseInt($('#pre_gst_type').val() || 2),
             gst_percentage: getGstPercentage(),
@@ -991,7 +1065,7 @@ $(document).ready(function () {
             free_qty: parseFloat($('#pre_free_qty').val() || 0),
             unit_conversion: parseFloat($('#pre_unit_conversion').val() || 1),
             purchase_price: parseFloat($('#pre_purchase_price').val() || 0),
-            discount_type: parseInt($('#pre_discount_type').val() || 1),
+            discount_type: parseInt($('#pre_discount_type').val() || 2),
             discount_value: parseFloat($('#pre_discount_value').val() || 0),
             gst_type: parseInt($('#pre_gst_type').val() || 2),
             gst_percentage: getGstPercentage(),
@@ -1012,9 +1086,9 @@ $(document).ready(function () {
         $('#pre_loose_piece_qty').val('0');
         $('#pre_free_qty').val('0');
         $('#pre_qty').val('0');
-        $('#pre_unit_conversion').val('1');
+        $('#pre_unit_conversion').val('1.0000');
         $('#pre_purchase_price').val('');
-        $('#pre_discount_type').val('1');
+        $('#pre_discount_type').val('2');
         $('#pre_discount_value').val('0.00');
         $('#pre_gst_type').val('2');
         $('#pre_gst_percentage').val('0.00');
@@ -1027,6 +1101,7 @@ $(document).ready(function () {
         $('#pre_igst_percentage').val('0.00');
         $('#pre_expiry_days').val('0');
         $('#pre_expiry_date').val('');
+        togglePreSecondaryUnit(false);
     }
 
     function renderItems() {
@@ -1059,8 +1134,8 @@ $(document).ready(function () {
                     <td>
                         <div class="input-group input-group-sm">
                             <select class="form-select item-calc" data-field="discount_type">
-                                <option value="1" ${parseInt(item.discount_type) === 1 ? 'selected' : ''}>%</option>
                                 <option value="2" ${parseInt(item.discount_type) === 2 ? 'selected' : ''}>₹</option>
+                                <option value="1" ${parseInt(item.discount_type) === 1 ? 'selected' : ''}>%</option>
                             </select>
                             <input type="number" step="0.01" min="0" class="form-control item-calc" data-field="discount_value" value="${item.discount_value}">
                         </div>
@@ -1304,7 +1379,7 @@ $(document).ready(function () {
                                 ? round2(parseFloat(item.gross_amount || 0) / parseFloat(item.qty || 0))
                                 : parseFloat(item.purchase_price || 0),
                             gross_amount: parseFloat(item.gross_amount || 0),
-                            discount_type: parseInt(item.discount_type || 1),
+                            discount_type: parseInt(item.discount_type || 2),
                             discount_value: parseFloat(item.discount_value || 0),
                             discount_amount: parseFloat(item.discount_amount || 0),
                             taxable_amount: parseFloat(item.taxable_amount || 0),

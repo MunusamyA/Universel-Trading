@@ -1081,12 +1081,14 @@ function getProducts(PDO $pdo)
             p.base_unit,
             p.box_label,
             p.default_pieces_per_box,
+            p.secondary_unit_label,
             p.secondary_unit_value,
             p.expire_days,
             p.gst_type,
             p.enter_mrp,
             p.final_mrp,
             p.cost_price,
+            p.cost_price AS purchase_price,
             p.retail_price,
             p.wholesale_price,
             h.hsn_code,
@@ -1303,15 +1305,16 @@ function addQuickProduct(PDO $pdo)
     $hsnId = (int)($_POST['hsn_id'] ?? 0);
 
     $baseUnit = cleanInput($_POST['base_unit'] ?? 'Piece');
-    $boxLabel = cleanInput($_POST['box_label'] ?? 'Box');
-    $defaultPiecesPerBox = round((float)($_POST['default_pieces_per_box'] ?? 1), 4);
-    $secondaryUnitLabel = cleanInput($_POST['secondary_unit_label'] ?? '');
-    $secondaryUnitValue = round((float)($_POST['secondary_unit_value'] ?? 1), 4);
+    $enableSecondaryUnit = (int)($_POST['enable_secondary_unit'] ?? 0) === 1;
+    $secondaryUnitLabel = $enableSecondaryUnit ? cleanInput($_POST['secondary_unit_label'] ?? '') : '';
+    $secondaryUnitValue = $enableSecondaryUnit ? round((float)($_POST['secondary_unit_value'] ?? 0), 4) : 0.0;
+    $boxLabel = $secondaryUnitLabel;
+    $defaultPiecesPerBox = $enableSecondaryUnit && $secondaryUnitValue > 0 ? $secondaryUnitValue : 1.0;
     $expireDays = (int)($_POST['expire_days'] ?? 0);
     $minimumStock = round((float)($_POST['minimum_stock'] ?? 0), 2);
     $status = (int)($_POST['status'] ?? 1);
 
-    $gstType = 2;
+    $gstType = (int)($_POST['gst_type'] ?? 2);
     $purchasePrice = round((float)($_POST['cost_price'] ?? ($_POST['purchase_price'] ?? 0)), 2);
 
     $retailMarkupType = (int)($_POST['retail_markup_type'] ?? 1);
@@ -1337,20 +1340,18 @@ function addQuickProduct(PDO $pdo)
         jsonResponse(false, 'Please select category.');
     }
 
-    if ($subCategoryId <= 0) {
-        jsonResponse(false, 'Please select sub category.');
-    }
+    if ($enableSecondaryUnit) {
+        if ($secondaryUnitLabel === '') {
+            jsonResponse(false, 'Please select Box / Case label.');
+        }
 
-    if ($hsnId <= 0) {
-        jsonResponse(false, 'Please select HSN.');
+        if ($secondaryUnitValue <= 0) {
+            jsonResponse(false, 'Please enter Pieces Per Box / UPC.');
+        }
     }
 
     if ($defaultPiecesPerBox <= 0) {
         $defaultPiecesPerBox = 1;
-    }
-
-    if ($secondaryUnitValue <= 0) {
-        $secondaryUnitValue = 1;
     }
 
     if (!in_array($status, [1, 2], true)) {
@@ -1407,8 +1408,8 @@ function addQuickProduct(PDO $pdo)
         'business_id' => $scope['business_id'],
         'branch_id' => $scope['branch_id'],
         'category_id' => $categoryId,
-        'sub_category_id' => $subCategoryId,
-        'hsn_id' => $hsnId,
+        'sub_category_id' => $subCategoryId > 0 ? $subCategoryId : null,
+        'hsn_id' => $hsnId > 0 ? $hsnId : 0,
         'product_code' => $productCode,
         'product_name' => $productName,
         'cost_price' => $purchasePrice,
@@ -1428,8 +1429,8 @@ function addQuickProduct(PDO $pdo)
         'box_label' => $boxLabel,
         'default_pieces_per_box' => $defaultPiecesPerBox,
         'pieces_per_box' => $defaultPiecesPerBox,
-        'secondary_unit_label' => $secondaryUnitLabel,
-        'secondary_unit_value' => $secondaryUnitValue,
+        'secondary_unit_label' => $secondaryUnitLabel !== '' ? $secondaryUnitLabel : null,
+        'secondary_unit_value' => $enableSecondaryUnit ? $secondaryUnitValue : null,
         'expire_days' => $expireDays,
         'minimum_stock' => $minimumStock,
         'gst_type' => $gstType,

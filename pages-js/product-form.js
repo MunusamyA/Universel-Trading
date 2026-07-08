@@ -23,6 +23,10 @@ $(document).ready(function () {
         loadSubCategories($(this).val());
     });
 
+    $('#enable_secondary_unit').on('change', function () {
+        toggleSecondaryConversion();
+    });
+
     $('#secondary_unit_label').on('change', function () {
         toggleSecondaryConversion();
     });
@@ -89,9 +93,12 @@ $(document).ready(function () {
         if (retailPrice <= stockPrice) return warn('Sale / retail price must be greater than stock price.', '#retail_price');
         if (wholesalePrice < stockPrice) return warn('Wholesale price must be greater than or equal to stock price.', '#wholesale_price');
         if ($('#base_unit').val() === '') return warn('Please select base unit.', '#base_unit');
-        let secondaryLabel = $('#secondary_unit_label').val() || '';
-        if (secondaryLabel !== '' && secondaryValue <= 0) return warn('Please enter secondary conversion value.', '#secondary_unit_value');
-        if (secondaryLabel === '') {
+        let secondaryEnabled = $('#enable_secondary_unit').is(':checked');
+        let secondaryLabel = secondaryEnabled ? ($('#secondary_unit_label').val() || '') : '';
+        if (secondaryEnabled && secondaryLabel === '') return warn('Please select secondary unit label.', '#secondary_unit_label');
+        if (secondaryEnabled && secondaryValue <= 0) return warn('Please enter secondary conversion value.', '#secondary_unit_value');
+        if (!secondaryEnabled) {
+            $('#secondary_unit_label').val('');
             $('#secondary_unit_value').val('');
         }
         if (initialStock < 0) return warn('Initial stock cannot be negative.', '#initial_stock');
@@ -296,8 +303,10 @@ $(document).ready(function () {
                     $('#wholesale_price').val(parseFloat(p.wholesale_price || 0).toFixed(2));
                     selectFallback('#base_unit', p.base_unit || 'Piece');
                     $('#box_label').val('');
-                    selectFallback('#secondary_unit_label', p.secondary_unit_label || '');
-                    $('#secondary_unit_value').val((p.secondary_unit_label && p.secondary_unit_value !== null && p.secondary_unit_value !== '') ? parseFloat(p.secondary_unit_value).toFixed(4) : '');
+                    let hasSecondaryUnit = !!(p.secondary_unit_label && String(p.secondary_unit_label).trim() !== '');
+                    $('#enable_secondary_unit').prop('checked', hasSecondaryUnit);
+                    selectFallback('#secondary_unit_label', hasSecondaryUnit ? p.secondary_unit_label : '');
+                    $('#secondary_unit_value').val((hasSecondaryUnit && p.secondary_unit_value !== null && p.secondary_unit_value !== '') ? parseFloat(p.secondary_unit_value).toFixed(4) : '');
                     toggleSecondaryConversion();
                     $('#initial_stock').val(parseFloat(p.initial_stock || 0).toFixed(4));
                     $('#initial_stock_expiry_date').val(p.initial_stock_expiry_date || '');
@@ -373,9 +382,14 @@ $(document).ready(function () {
 
 
     function toggleSecondaryConversion() {
-        let hasSecondaryUnit = ($('#secondary_unit_label').val() || '') !== '';
-        $('#secondary_unit_value').prop('disabled', !hasSecondaryUnit);
-        if (!hasSecondaryUnit) {
+        let enabled = $('#enable_secondary_unit').is(':checked');
+
+        $('.secondary-unit-field').toggleClass('d-none', !enabled);
+        $('#secondary_unit_label').prop('disabled', !enabled);
+        $('#secondary_unit_value').prop('disabled', !enabled);
+
+        if (!enabled) {
+            $('#secondary_unit_label').val('');
             $('#secondary_unit_value').val('');
         }
     }
@@ -460,3 +474,4 @@ $(document).ready(function () {
     function handleError(response) { if (response && response.redirect) { window.location.href = response.redirect; return; } showToastSafe('error', response && response.message ? response.message : 'Something went wrong.'); }
     function escapeHtml(value) { return $('<div>').text(value === null || value === undefined ? '' : value).html(); }
 });
+

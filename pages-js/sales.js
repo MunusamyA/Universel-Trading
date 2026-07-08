@@ -600,7 +600,13 @@ $(document).ready(function () {
             searchProductTimer = setTimeout(searchProducts, 300);
         });
 
-        $('#unitQty, #qtyPerUnit, #looseQty').on('input', calculateTotalQty);
+        $('#clearProductSearchBtn').on('click', function () {
+            resetProductEntry();
+            $('#productSuggestions').addClass('d-none').html('');
+            $('#productSearch').focus();
+        });
+
+        $('#unitQty, #qtyPerUnit').on('input', calculateTotalQty);
 
         $('#invoiceTypeSwitch').on('change', function () {
             $('#invoiceType').val($(this).is(':checked') ? '1' : '2');
@@ -766,7 +772,7 @@ $(document).ready(function () {
         });
 
         
-        $(document).on('input', '.batch-unit-qty, .batch-loose-qty', function () {
+        $(document).on('input', '.batch-unit-qty', function () {
             calculateSelectedBatchRow($(this).closest('.selected-batch-detail-row'));
         });
 
@@ -838,7 +844,7 @@ $(document).on('click', '.remove-item-btn', function () {
             if (!$(e.target).closest('#customerSearch, #customerSuggestions').length) {
                 $('#customerSuggestions').addClass('d-none');
             }
-            if (!$(e.target).closest('#productSearch, #productSuggestions').length) {
+            if (!$(e.target).closest('#productSearch, #clearProductSearchBtn, #productSuggestions').length) {
                 $('#productSuggestions').addClass('d-none');
             }
         });
@@ -958,7 +964,7 @@ $(document).on('click', '.remove-item-btn', function () {
     }
 
     function loadProductBatches(productId, callback) {
-        $('#selectedBatchDetailsBody').html('<tr><td colspan="12" class="text-center text-muted">Loading batches...</td></tr>');
+        $('#selectedBatchDetailsBody').html('<tr><td colspan="11" class="text-center text-muted">Loading batches...</td></tr>');
 
         $.ajax({
             url: window.BASE_URL + 'api/sales.php',
@@ -980,7 +986,7 @@ $(document).on('click', '.remove-item-btn', function () {
             },
             error: function (xhr) {
                 console.log(xhr.responseText);
-                $('#selectedBatchDetailsBody').html('<tr><td colspan="12" class="text-center text-danger">Server error.</td></tr>');
+                $('#selectedBatchDetailsBody').html('<tr><td colspan="11" class="text-center text-danger">Server error.</td></tr>');
             }
         });
     }
@@ -988,7 +994,7 @@ $(document).on('click', '.remove-item-btn', function () {
     function renderProductBatches(batches) {
         if (!batches || batches.length === 0) {
             selectedBatches = [];
-            $('#selectedBatchDetailsBody').html('<tr><td colspan="12" class="text-center text-muted">No available batch stock.</td></tr>');
+            $('#selectedBatchDetailsBody').html('<tr><td colspan="11" class="text-center text-muted">No available batch stock.</td></tr>');
             $('#selectedBatchBox').addClass('d-none').html('');
             return;
         }
@@ -1153,11 +1159,33 @@ function getBatchKey(batch) {
         };
     }
 
+    function productHasSecondaryUnit(product, batch) {
+        product = product || {};
+        batch = batch || {};
+
+        let label = String(batch.secondary_unit_label || product.secondary_unit_label || batch.box_label || product.box_label || '').trim();
+        let value = parseFloat(batch.secondary_unit_value || product.secondary_unit_value || batch.unit_conversion || product.default_pieces_per_box || 1);
+
+        return label !== '' && value > 1;
+    }
+
+    function productSecondaryUnitLabel(product, batch) {
+        product = product || {};
+        batch = batch || {};
+
+        return String(batch.secondary_unit_label || product.secondary_unit_label || batch.box_label || product.box_label || 'Unit').trim() || 'Unit';
+    }
+
     function calculateSelectedBatchRow(row) {
+        let hasSecondaryUnit = parseInt(row.attr('data-has-secondary') || 0) === 1;
         let unitQty = parseFloat(row.find('.batch-unit-qty').val() || 0);
-        let qtyPerUnit = parseFloat(row.find('.batch-qty-per-unit').val() || 0);
-        let looseQty = parseFloat(row.find('.batch-loose-qty').val() || 0);
-        let totalQty = (unitQty * qtyPerUnit) + looseQty;
+        let qtyPerUnit = hasSecondaryUnit ? parseFloat(row.find('.batch-qty-per-unit').val() || 0) : 1;
+
+        if (qtyPerUnit <= 0) {
+            qtyPerUnit = 1;
+        }
+
+        let totalQty = hasSecondaryUnit ? (unitQty * qtyPerUnit) : unitQty;
         row.find('.batch-total-qty').val(totalQty > 0 ? totalQty.toFixed(2) : '');
     }
 
@@ -1186,26 +1214,36 @@ function getBatchKey(batch) {
         existingRows = existingRows || [];
 
         if (!selectedBatches || selectedBatches.length === 0) {
-            $('#selectedBatchDetailsBody').html('<tr><td colspan="12" class="text-center text-muted">Search and select product to load batch-wise inputs.</td></tr>');
+            $('#salesQtyPerUnitHeader').removeClass('d-none');
+            $('#selectedBatchDetailsBody').html('<tr><td colspan="11" class="text-center text-muted">Search and select product to load batch-wise inputs.</td></tr>');
             return;
         }
+
+        let hasAnySecondaryUnit = selectedBatches.some(function (batch) {
+            return productHasSecondaryUnit(selectedProduct, batch);
+        });
+
+        $('#salesUnitHeader').text(hasAnySecondaryUnit ? 'Box / Case Qty' : 'Qty');
+        $('#salesQtyPerUnitHeader').toggleClass('d-none', !hasAnySecondaryUnit);
 
         let html = '';
         $.each(selectedBatches, function (_, batch) {
             let old = existingRows.find(r => parseInt(r.purchase_item_id) === parseInt(batch.purchase_item_id)) || {};
-            let conversion = parseFloat(batch.unit_conversion || batch.secondary_unit_value || selectedProduct?.secondary_unit_value || old.qty_per_unit || 1);
+            let hasSecondaryUnit = productHasSecondaryUnit(selectedProduct, batch);
+            let conversion = hasSecondaryUnit
+                ? parseFloat(batch.unit_conversion || batch.secondary_unit_value || selectedProduct?.secondary_unit_value || old.qty_per_unit || 1)
+                : 1;
+
             if (conversion <= 0) conversion = 1;
 
             batch._price_type = parseInt(old.price_type || batch._price_type || 1);
             let info = getBatchDefaultPriceInfo(batch);
 
             let unitQty = parseFloat(old.unit_qty || 0);
-            let looseQty = parseFloat(old.loose_qty || 0);
             let totalQty = parseFloat(old.qty || 0);
 
-            if (totalQty > 0 && unitQty <= 0 && looseQty <= 0) {
-                unitQty = Math.floor(totalQty / conversion);
-                looseQty = totalQty - (unitQty * conversion);
+            if (totalQty > 0 && unitQty <= 0) {
+                unitQty = hasSecondaryUnit ? (totalQty / conversion) : totalQty;
             }
 
             let discountType = parseInt(old.discount_type || 1);
@@ -1214,18 +1252,22 @@ function getBatchKey(batch) {
             let sellingRate = old.selling_rate !== undefined ? parseFloat(old.selling_rate || 0) : info.selling_rate;
             let markupType = old.markup_type !== undefined ? parseInt(old.markup_type || 1) : info.markup_type;
             let markupValue = old.markup_value !== undefined ? parseFloat(old.markup_value || 0) : info.markup_value;
+            let unitLabel = hasSecondaryUnit ? productSecondaryUnitLabel(selectedProduct, batch) : (batch.base_unit || batch.product_base_unit || selectedProduct?.base_unit || 'Qty');
+            let qtyPerUnitCellClass = hasSecondaryUnit ? '' : 'd-none';
 
             html += `
-                <tr class="selected-batch-detail-row" data-purchase-item-id="${parseInt(batch.purchase_item_id)}">
+                <tr class="selected-batch-detail-row" data-purchase-item-id="${parseInt(batch.purchase_item_id)}" data-has-secondary="${hasSecondaryUnit ? 1 : 0}">
                     <td>
                         <div class="batch-title">${escapeHtml(batch.batch_no || '-')}</div>
                         <div class="text-muted batch-sub">Bill: ${escapeHtml(batch.bill_no || '-')} | ${escapeHtml(batch.purchase_date || '-')}</div>
                     </td>
                     <td class="text-end">${parseFloat(batch.available_qty || 0).toFixed(2)}</td>
                     <td class="text-end">${formatCurrency(batch.purchase_price || 0)}</td>
-                    <td><input type="number" step="0.01" min="0" class="form-control batch-unit-qty text-end" value="${formatInput2(unitQty, true)}"></td>
-                    <td><input type="number" step="0.01" min="0" class="form-control batch-qty-per-unit text-end" value="${formatInput2(conversion, false)}" readonly></td>
-                    <td><input type="number" step="0.01" min="0" class="form-control batch-loose-qty text-end" value="${formatInput2(looseQty, true)}"></td>
+                    <td>
+                        <input type="number" step="0.01" min="0" class="form-control batch-unit-qty text-end" value="${formatInput2(unitQty, true)}">
+                        <small class="text-muted">${escapeHtml(unitLabel)}</small>
+                    </td>
+                    <td class="batch-qty-per-unit-cell ${qtyPerUnitCellClass}"><input type="number" step="0.01" min="0" class="form-control batch-qty-per-unit text-end" value="${formatInput2(conversion, false)}" readonly></td>
                     <td><input type="number" step="0.01" class="form-control batch-total-qty text-end" value="${formatInput2(totalQty, true)}" readonly></td>
                     <td>
                         <select class="form-select batch-price-type">
@@ -1292,9 +1334,10 @@ function addOrUpdateSalesItem() {
                 return true;
             }
 
+            let hasSecondaryUnit = parseInt(row.attr('data-has-secondary') || 0) === 1;
             let unitQty = parseFloat(row.find('.batch-unit-qty').val() || 0);
-            let qtyPerUnit = parseFloat(row.find('.batch-qty-per-unit').val() || 0);
-            let looseQty = parseFloat(row.find('.batch-loose-qty').val() || 0);
+            let qtyPerUnit = hasSecondaryUnit ? parseFloat(row.find('.batch-qty-per-unit').val() || 0) : 1;
+            let looseQty = 0;
             let totalQty = parseFloat(row.find('.batch-total-qty').val() || 0);
             let availableQty = parseFloat(batch.available_qty || 0);
 
@@ -1440,10 +1483,9 @@ function addOrUpdateSalesItem() {
         selectedBatches = [];
         $('#productSearch').val('');
         $('#selectedBatchBox').addClass('d-none').html('');
-        $('#selectedBatchDetailsBody').html('<tr><td colspan="12" class="text-center text-muted">Search and select product to load batch-wise inputs.</td></tr>');
+        $('#selectedBatchDetailsBody').html('<tr><td colspan="11" class="text-center text-muted">Search and select product to load batch-wise inputs.</td></tr>');
         $('#unitQty').val('0');
         $('#qtyPerUnit').val('1');
-        $('#looseQty').val('0');
         $('#totalQty').val('0');
         $('#sellingRate').val('0');
         $('#markupValue').val('0');
@@ -1455,7 +1497,7 @@ function addOrUpdateSalesItem() {
 
     function renderSalesItems() {
         if (!salesItems || salesItems.length === 0) {
-            $('#itemsTableBody').html('<tr><td colspan="10" class="text-center text-muted">No items added.</td></tr>');
+            $('#itemsTableBody').html('<tr><td colspan="9" class="text-center text-muted">No items added.</td></tr>');
             return;
         }
 
@@ -1474,7 +1516,6 @@ function addOrUpdateSalesItem() {
             let first = rows[0];
 
             let totalUnit = 0;
-            let totalLoose = 0;
             let totalQty = 0;
             let lineGross = 0;
             let lineTax = 0;
@@ -1491,11 +1532,9 @@ function addOrUpdateSalesItem() {
                 let line = calculateItemLine(row);
                 let rowQty = parseFloat(row.qty || 0);
                 let rowUnit = parseFloat(row.unit_qty || 0);
-                let rowLoose = parseFloat(row.loose_qty || 0);
                 let rowQtyPerUnit = parseFloat(row.qty_per_unit || 0);
 
                 totalUnit += rowUnit;
-                totalLoose += rowLoose;
                 totalQty += rowQty;
                 lineGross += line.gross;
                 lineTax += line.tax;
@@ -1531,7 +1570,6 @@ function addOrUpdateSalesItem() {
                     </td>
                     <td class="text-end">${totalUnit.toFixed(2)}</td>
                     <td class="text-end">${displayQtyPerUnit}</td>
-                    <td class="text-end">${totalLoose.toFixed(2)}</td>
                     <td class="text-end"><strong>${totalQty.toFixed(2)}</strong></td>
                     <td class="text-end">${displayRate}</td>
                     <td class="text-end">${formatCurrency(lineTax)}</td>
@@ -2008,7 +2046,7 @@ function addOrUpdateSalesItem() {
         if (qtyPerUnit <= 0) {
             qtyPerUnit = 1;
         }
-        let looseQty = parseFloat(item.loose_qty || 0);
+        let looseQty = 0;
 
         /*
          * IMPORTANT FIX:
@@ -2017,7 +2055,7 @@ function addOrUpdateSalesItem() {
          */
         let qty = parseFloat(item.qty || item.entered_total_qty || 0);
         if (qty <= 0) {
-            qty = (unitQty * qtyPerUnit) + looseQty;
+            qty = unitQty * qtyPerUnit;
         }
 
         item.unit_qty = unitQty;

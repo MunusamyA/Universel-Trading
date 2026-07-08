@@ -1415,6 +1415,9 @@ function getProductBatches(PDO $pdo)
             p.batch_no,
             p.bill_no,
             p.purchase_date,
+            pr.base_unit AS product_base_unit,
+            pr.secondary_unit_label,
+            pr.secondary_unit_value,
             pr.retail_price,
             pr.wholesale_price,
             pr.retail_markup_type,
@@ -2656,7 +2659,10 @@ function saveSale(PDO $pdo)
         requireSalesEntryDocumentCreatePermission($documentType);
     }
 
-    $shouldDeductStock = in_array($documentType, [4,5], true);
+    $documentNeedsStockDeduction = in_array($documentType, [4,5], true);
+    $shouldDeductStock = $documentNeedsStockDeduction;
+    $saleStockDeductedValue = $documentNeedsStockDeduction ? 1 : 0;
+    $carryForwardExistingStockDeduction = false;
 
     try {
         $pdo->beginTransaction();
@@ -2673,6 +2679,23 @@ function saveSale(PDO $pdo)
 
             $oldCustomerId = (int)$oldSale['customer_id'];
             $oldDocumentType = (int)$oldSale['document_type'];
+
+            /*
+             * Stock movement rule:
+             * If a stock-deducted document is generated to another stock-deducted document
+             * without changing product/batch/qty, keep the existing deduction.
+             * This prevents duplicate OUT movement for Generate / Convert.
+             */
+            if (
+                $isConvertMode
+                && (int)($oldSale['stock_deducted'] ?? 0) === 1
+                && $documentNeedsStockDeduction
+                && saleSubmittedItemsMatchActiveStockItems($pdo, $scope, $saleId, $items)
+            ) {
+                $carryForwardExistingStockDeduction = true;
+                $shouldDeductStock = false;
+                $saleStockDeductedValue = 1;
+            }
 
             if ($isConvertMode) {
                 /*
@@ -2694,7 +2717,7 @@ function saveSale(PDO $pdo)
                 }
             }
 
-            if ((int)$oldSale['stock_deducted'] === 1) {
+            if ((int)$oldSale['stock_deducted'] === 1 && !$carryForwardExistingStockDeduction) {
                 requireSalesPermission('adjust');
                 reverseSaleStock($pdo, $scope, $saleId);
             }
@@ -2818,7 +2841,7 @@ function saveSale(PDO $pdo)
                 ':paid_amount' => round2($paidAmount),
                 ':due_amount' => $dueAmount,
                 ':payment_status' => $paymentStatus,
-                ':stock_deducted' => $shouldDeductStock ? 1 : 0,
+                ':stock_deducted' => $saleStockDeductedValue,
                 ':notes' => $notes,
                 ':terms' => $terms,
                 ':status' => $finalStatus,
@@ -2881,7 +2904,7 @@ function saveSale(PDO $pdo)
                 ':paid_amount' => round2($paidAmount),
                 ':due_amount' => $dueAmount,
                 ':payment_status' => $paymentStatus,
-                ':stock_deducted' => $shouldDeductStock ? 1 : 0,
+                ':stock_deducted' => $saleStockDeductedValue,
                 ':notes' => $notes,
                 ':terms' => $terms,
                 ':status' => $finalStatus,
@@ -3252,6 +3275,95 @@ function markOldPaymentsInactive(PDO $pdo, array $scope, $saleId)
         ':business_id' => $scope['business_id'],
         ':branch_id' => $scope['branch_id']
     ]);
+}
+
+
+function saleSubmittedItemsMatchActiveStockItems(PDO $pdo, array $scope, $saleId, array $submittedItems)
+{
+    $stmt = $pdo->prepare(""
+        . "SELECT product_id, purchase_item_id, qty "
+        . "FROM sales_items "
+        . "WHERE sales_id = :sales_id "
+        . "AND business_id = :business_id "
+        . "AND branch_id = :branch_id "
+        . "AND status = 1 "
+        . "ORDER BY id ASC"
+    );
+    $stmt->execute([
+        ':sales_id' => $saleId,
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id']
+    ]);
+
+    $oldItems = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (count($oldItems) !== count($submittedItems)) {
+        return false;
+    }
+
+    $oldMap = [];
+    foreach ($oldItems as $item) {
+        $productId = (int)($item['product_id'] ?? 0);
+        $purchaseItemId = (int)($item['purchase_item_id'] ?? 0);
+        $qty = round((float)($item['qty'] ?? 0), 4);
+        if ($productId <= 0 || $purchaseItemId <= 0 || $qty <= 0) {
+            return false;
+        }
+        $key = $productId . ':' . $purchaseItemId;
+        if (!isset($oldMap[$key])) {
+            $oldMap[$key] = 0.0;
+        }
+        $oldMap[$key] = round($oldMap[$key] + $qty, 4);
+    }
+
+    $newMap = [];
+    foreach ($submittedItems as $row) {
+        $productId = (int)($row['product_id'] ?? 0);
+        $purchaseItemId = (int)($row['purchase_item_id'] ?? 0);
+        if ($productId <= 0 || $purchaseItemId <= 0) {
+            return false;
+        }
+
+        $qty = toFloat($row['qty'] ?? 0);
+        if ($qty <= 0) {
+            $qty = toFloat($row['entered_total_qty'] ?? 0);
+        }
+        if ($qty <= 0) {
+            $unitQty = toFloat($row['unit_qty'] ?? 0);
+            $qtyPerUnit = toFloat($row['qty_per_unit'] ?? 1);
+            if ($qtyPerUnit <= 0) {
+                $qtyPerUnit = 1;
+            }
+            $looseQty = toFloat($row['loose_qty'] ?? 0);
+            $qty = round($unitQty * $qtyPerUnit + $looseQty, 4);
+        }
+
+        $qty = round((float)$qty, 4);
+        if ($qty <= 0) {
+            return false;
+        }
+
+        $key = $productId . ':' . $purchaseItemId;
+        if (!isset($newMap[$key])) {
+            $newMap[$key] = 0.0;
+        }
+        $newMap[$key] = round($newMap[$key] + $qty, 4);
+    }
+
+    if (count($oldMap) !== count($newMap)) {
+        return false;
+    }
+
+    foreach ($oldMap as $key => $oldQty) {
+        if (!array_key_exists($key, $newMap)) {
+            return false;
+        }
+        if (abs((float)$oldQty - (float)$newMap[$key]) > 0.0001) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 function computeItems(PDO $pdo, array $scope, array $items, $invoiceType, $shouldDeductStock)

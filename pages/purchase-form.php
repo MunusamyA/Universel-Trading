@@ -167,27 +167,27 @@ $page_title = ($purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase') . ' | Univers
                                                 <label class="form-label">Purchase Batch</label>
                                                 <input type="text" class="form-control form-control-sm bg-light" id="pre_purchase_batch_no" placeholder="Header Batch" readonly>
                                             </div>
-                                            <div class="col-md-3 mb-2">
+                                            <div class="col-md-3 mb-2 pre-secondary-unit-field d-none">
                                                 <label class="form-label">Box / Case Label</label>
                                                 <input type="text" class="form-control form-control-sm bg-light" id="pre_unit_label" value="Box" readonly>
-                                                <small class="text-muted">Box / Case purchase</small>
+                                                <small class="text-muted">Secondary unit from product master</small>
                                             </div>
-                                            <div class="col-md-3 mb-2">
+                                            <div class="col-md-3 mb-2 pre-secondary-unit-field d-none">
                                                 <label class="form-label">Box / Case Qty</label>
                                                 <input type="number" step="0.0001" min="0" class="form-control form-control-sm pre-calc" id="pre_box_qty" value="0">
                                             </div>
                                             <div class="col-md-3 mb-2">
-                                                <label class="form-label">Loose Piece Qty</label>
+                                                <label class="form-label" id="preLoosePieceQtyLabel">Piece Qty</label>
                                                 <input type="number" step="0.0001" min="0" class="form-control form-control-sm pre-calc" id="pre_loose_piece_qty" value="0">
                                             </div>
                                             <div class="col-md-3 mb-2">
                                                 <label class="form-label">Free Piece Qty</label>
                                                 <input type="number" step="0.0001" min="0" class="form-control form-control-sm pre-calc" id="pre_free_qty" value="0">
                                             </div>
-                                            <div class="col-md-3 mb-2">
+                                            <div class="col-md-3 mb-2 pre-secondary-unit-field d-none">
                                                 <label class="form-label">Pieces Per Box / UPC</label>
                                                 <input type="number" step="0.0001" min="1" class="form-control form-control-sm pre-calc" id="pre_unit_conversion" value="1">
-                                                <small class="text-muted">Total = (Box × UPC) + Loose + Free</small>
+                                                <small class="text-muted">Same as product secondary unit value</small>
                                             </div>
                                             <div class="col-md-3 mb-2">
                                                 <label class="form-label">Total Stock Pieces</label>
@@ -203,12 +203,12 @@ $page_title = ($purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase') . ' | Univers
                                                 <label class="form-label">Scheme Discount</label>
                                                 <div class="input-group input-group-sm">
                                                     <select class="form-select pre-calc" id="pre_discount_type">
+                                                        <option value="2" selected>₹</option>
                                                         <option value="1">%</option>
-                                                        <option value="2">₹</option>
                                                     </select>
                                                     <input type="number" step="0.01" min="0" class="form-control pre-calc" id="pre_discount_value" value="0.00" placeholder="If ₹, enter total discount">
                                                 </div>
-                                                <small class="text-muted">% = per rate discount, ₹ = fixed total line discount</small>
+                                                <small class="text-muted">₹ = fixed total line discount, % = percentage discount</small>
                                             </div>
                                             <div class="col-md-3 mb-2">
                                                 <label class="form-label">MRP</label>
@@ -274,10 +274,9 @@ $page_title = ($purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase') . ' | Univers
                         </div>
                     </div>
 
-                    <div class="">
-
-                        <!-- <div class="col-lg-5"> -->
-                            <div class="card">
+                    <div class="row">
+                        <div class="col-lg-6">
+                            <div class="card h-100">
                                 <div class="card-body">
                                     <h5 class="font-size-15 mb-3">Summary</h5>
 
@@ -329,44 +328,47 @@ $page_title = ($purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase') . ' | Univers
                                         </div>
                                     </div>
 
-
-                                    <div class="border rounded p-3 mb-2" id="purchasePaymentSplitBox">
-                                        <div class="d-flex align-items-center justify-content-between mb-2">
-                                            <h6 class="mb-0">Payment Split</h6>
-                                            <button type="button" class="btn btn-sm btn-outline-primary" id="addPurchasePaymentSplitBtn">
-                                                <i class="mdi mdi-plus me-1"></i> Add Split
-                                            </button>
-                                        </div>
-                                        <div class="table-responsive">
-                                            <table class="table table-sm table-bordered mb-2">
-                                                <thead class="table-light">
-                                                <tr>
-                                                    <th>Payment Mode</th>
-                                                    <th>Amount</th>
-                                                    <th>Reference No</th>
-                                                    <th width="50">#</th>
-                                                </tr>
-                                                </thead>
-                                                <tbody id="purchasePaymentSplitsBody">
-                                                <tr><td colspan="4" class="text-center text-muted">Enter paid amount to add split.</td></tr>
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                        <div class="text-end small">
-                                            Split Total: <strong>₹<span id="purchaseSplitTotal">0.00</span></strong>
-                                            <span class="ms-2">Balance: <strong class="text-danger">₹<span id="purchaseSplitBalance">0.00</span></strong></span>
-                                        </div>
-                                    </div>
                                     <div class="row mb-2">
                                         <label class="col-5 col-form-label">Due Amount</label>
                                         <div class="col-7">
                                             <input type="number" class="form-control text-end text-danger fw-bold" id="due_amount" readonly value="0.00">
                                         </div>
                                     </div>
-
                                 </div>
                             </div>
-                        <!-- </div> -->
+                        </div>
+
+                        <div class="col-lg-6">
+                            <div class="card h-100" id="purchasePaymentSplitBox">
+                                <div class="card-body">
+                                    <div class="d-flex align-items-center justify-content-between mb-3">
+                                        <h5 class="font-size-15 mb-0">Payment Split</h5>
+                                        <button type="button" class="btn btn-sm btn-outline-primary" id="addPurchasePaymentSplitBtn">
+                                            <i class="mdi mdi-plus me-1"></i> Add Split
+                                        </button>
+                                    </div>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-bordered mb-2">
+                                            <thead class="table-light">
+                                            <tr>
+                                                <th>Payment Mode</th>
+                                                <th>Amount</th>
+                                                <th>Reference No</th>
+                                                <th width="50">#</th>
+                                            </tr>
+                                            </thead>
+                                            <tbody id="purchasePaymentSplitsBody">
+                                            <tr><td colspan="4" class="text-center text-muted">Enter paid amount to add split.</td></tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div class="text-end small">
+                                        Split Total: <strong>₹<span id="purchaseSplitTotal">0.00</span></strong>
+                                        <span class="ms-2">Balance: <strong class="text-danger">₹<span id="purchaseSplitBalance">0.00</span></strong></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="text-end mb-4">
@@ -411,14 +413,14 @@ $page_title = ($purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase') . ' | Univers
                                 </select>
                             </div>
                             <div class="col-md-4">
-                                <label class="form-label">Sub Category <span class="text-danger">*</span></label>
-                                <select class="form-select" name="sub_category_id" id="quick_sub_category_id" required>
+                                <label class="form-label">Sub Category</label>
+                                <select class="form-select" name="sub_category_id" id="quick_sub_category_id">
                                     <option value="">Select Sub Category</option>
                                 </select>
                             </div>
                             <div class="col-md-4">
-                                <label class="form-label">HSN <span class="text-danger">*</span></label>
-                                <select class="form-select" name="hsn_id" id="quick_hsn_id" required>
+                                <label class="form-label">HSN</label>
+                                <select class="form-select" name="hsn_id" id="quick_hsn_id">
                                     <option value="">Select HSN</option>
                                 </select>
                             </div>
@@ -515,28 +517,28 @@ $page_title = ($purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase') . ' | Univers
                                 </select>
                             </div>
                             <div class="col-md-3">
-                                <label class="form-label">Box / Case Label</label>
-                                <select class="form-select" name="box_label" id="quick_box_label">
-                                    <option value="Box">Box</option><option value="Case">Case</option><option value="Pack">Pack</option><option value="Carton">Carton</option><option value="Bundle">Bundle</option><option value="Bag">Bag</option>
-                                </select>
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label">Pieces Per Box / Case</label>
-                                <input type="number" step="0.0001" min="1" class="form-control" name="default_pieces_per_box" id="quick_default_pieces_per_box" value="1.0000">
-                            </div>
-                            <div class="col-md-3">
                                 <label class="form-label">Minimum Stock</label>
                                 <input type="number" step="0.01" min="0" class="form-control" name="minimum_stock" id="quick_minimum_stock" value="0.00">
                             </div>
-                            <div class="col-md-3">
-                                <label class="form-label">Secondary Unit Label</label>
-                                <input type="text" class="form-control" name="secondary_unit_label" id="quick_secondary_unit_label" placeholder="Strip / Sheet / Kg">
+                            <div class="col-md-6 d-flex align-items-end">
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input quick-product-calc" type="checkbox" id="quick_enable_secondary_unit" name="enable_secondary_unit" value="1">
+                                    <label class="form-check-label" for="quick_enable_secondary_unit">Enable Box / Case / UPC secondary unit</label>
+                                </div>
                             </div>
-                            <div class="col-md-3">
-                                <label class="form-label">Secondary Conversion</label>
-                                <input type="number" step="0.0001" min="0.0001" class="form-control" name="secondary_unit_value" id="quick_secondary_unit_value" value="1.0000">
-                                <small class="text-muted">1 secondary unit = this many base pieces</small>
+                            <div class="col-md-3 quick-secondary-unit-fields d-none">
+                                <label class="form-label">Box / Case Label</label>
+                                <select class="form-select quick-product-calc" name="secondary_unit_label" id="quick_secondary_unit_label">
+                                    <option value="">Select</option><option value="Box">Box</option><option value="Case">Case</option><option value="Pack">Pack</option><option value="Carton">Carton</option><option value="Bundle">Bundle</option><option value="Bag">Bag</option>
+                                </select>
                             </div>
+                            <div class="col-md-3 quick-secondary-unit-fields d-none">
+                                <label class="form-label">Pieces Per Box / UPC</label>
+                                <input type="number" step="0.0001" min="1" class="form-control quick-product-calc" name="secondary_unit_value" id="quick_secondary_unit_value" value="">
+                                <small class="text-muted">This will be saved as secondary unit value.</small>
+                            </div>
+                            <input type="hidden" name="box_label" id="quick_box_label" value="">
+                            <input type="hidden" name="default_pieces_per_box" id="quick_default_pieces_per_box" value="1.0000">
                         </div>
                     </div>
                 </div>

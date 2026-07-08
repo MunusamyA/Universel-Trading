@@ -334,7 +334,12 @@ $salesPageConfig = [
                                     <div class="mb-2">
                                         <label class="form-label">Search Product</label>
                                         <div class="position-relative">
-                                            <input type="text" class="form-control" id="productSearch" placeholder="Search product code / name">
+                                            <div class="input-group">
+                                                <input type="text" class="form-control" id="productSearch" placeholder="Search product code / name">
+                                                <button type="button" class="btn btn-outline-secondary" id="clearProductSearchBtn" title="Clear product">
+                                                    Clear
+                                                </button>
+                                            </div>
                                             <div id="productSuggestions" class="list-group position-absolute w-100 shadow-sm d-none" style="z-index:1050; max-height:260px; overflow-y:auto; top:100%; left:0; margin-top:0;"></div>
                                         </div>
                                     </div>
@@ -356,9 +361,8 @@ $salesPageConfig = [
                                         <tr>
                                             <th>Product</th>
                                             <th>Batch</th>
-                                            <th class="text-end">Unit</th>
+                                            <th class="text-end">Unit / Qty</th>
                                             <th class="text-end">Qty/Unit</th>
-                                            <th class="text-end">Loose</th>
                                             <th class="text-end">Total Qty</th>
                                             <th class="text-end">Rate</th>
                                             <th class="text-end">GST</th>
@@ -368,7 +372,7 @@ $salesPageConfig = [
                                     </thead>
                                     <tbody id="itemsTableBody">
                                         <tr>
-                                            <td colspan="10" class="text-center text-muted">No items added.</td>
+                                            <td colspan="9" class="text-center text-muted">No items added.</td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -512,9 +516,8 @@ $salesPageConfig = [
                                 <th style="min-width:150px;">Batch</th>
                                 <th class="text-end" style="min-width:85px;">Available</th>
                                 <th class="text-end" style="min-width:85px;">Purchase</th>
-                                <th class="text-end" style="min-width:80px;">Unit</th>
-                                <th class="text-end" style="min-width:90px;">Qty/Unit</th>
-                                <th class="text-end" style="min-width:90px;">Loose</th>
+                                <th class="text-end" style="min-width:90px;" id="salesUnitHeader">Unit Qty</th>
+                                <th class="text-end" style="min-width:90px;" id="salesQtyPerUnitHeader">Qty/Unit</th>
                                 <th class="text-end" style="min-width:90px;">Total Qty</th>
                                 <th style="min-width:115px;">Price Type</th>
                                 <th class="text-end" style="min-width:95px;">Rate</th>
@@ -525,12 +528,12 @@ $salesPageConfig = [
                         </thead>
                         <tbody id="selectedBatchDetailsBody">
                             <tr>
-                                <td colspan="12" class="text-center text-muted">Search and select product to load batch-wise inputs.</td>
+                                <td colspan="11" class="text-center text-muted">Search and select product to load batch-wise inputs.</td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
-                <small class="text-muted d-block mt-1">Each batch has separate Unit, Loose Qty, Price Type, Discount and GST. Enter qty only in needed batch rows.</small>
+                <small class="text-muted d-block mt-1">Each batch has separate Unit Qty, Price Type, Discount and GST. For secondary-unit products, Qty/Unit is auto-filled from product master.</small>
             </div>
 
             <div class="modal-footer py-2">
