@@ -192,7 +192,7 @@ $page_title = 'Dashboard | Universal Trading';
 
                 <div id="dashboardContent" class="d-none">
 
-                    <div class="row g-3">
+                    <div class="row g-3" id="dashboardKpiRow">
                         <div class="col-sm-6 col-xl-3">
                             <div class="card dashboard-card kpi-card mb-0">
                                 <div class="card-body d-flex justify-content-between align-items-start">
@@ -247,12 +247,12 @@ $page_title = 'Dashboard | Universal Trading';
                     </div>
 
                     <div class="row g-3 mt-1">
-                        <div class="col-xl-6">
+                        <div class="col-xl-6" id="areaChartCardWrap">
                             <div class="card dashboard-card">
                                 <div class="card-body">
                                     <div class="mb-2">
-                                        <h5 class="chart-card-title">Area Chart</h5>
-                                        <p class="chart-card-subtitle">Sales trend overview</p>
+                                        <h5 class="chart-card-title" id="areaChartTitle">Area Chart</h5>
+                                        <p class="chart-card-subtitle" id="areaChartSubTitle">Sales trend overview</p>
                                     </div>
                                     <div class="row">
                                         <div class="col-4"><div class="chart-stat"><div class="value" id="areaMonthSales">₹0.00</div><div class="label">Month Sales</div></div></div>
@@ -264,12 +264,12 @@ $page_title = 'Dashboard | Universal Trading';
                             </div>
                         </div>
 
-                        <div class="col-xl-6">
+                        <div class="col-xl-6" id="donutChartCardWrap">
                             <div class="card dashboard-card">
                                 <div class="card-body">
                                     <div class="mb-2">
-                                        <h5 class="chart-card-title">Donut Chart</h5>
-                                        <p class="chart-card-subtitle">Document distribution</p>
+                                        <h5 class="chart-card-title" id="donutChartTitle">Donut Chart</h5>
+                                        <p class="chart-card-subtitle" id="donutChartSubTitle">Document distribution</p>
                                     </div>
                                     <div class="row">
                                         <div class="col-4"><div class="chart-stat"><div class="value" id="quotationCount">0</div><div class="label">Quotation</div></div></div>
@@ -283,12 +283,12 @@ $page_title = 'Dashboard | Universal Trading';
                     </div>
 
                     <div class="row g-3 mt-1">
-                        <div class="col-xl-6">
+                        <div class="col-xl-6" id="barChartCardWrap">
                             <div class="card dashboard-card">
                                 <div class="card-body">
                                     <div class="mb-2">
-                                        <h5 class="chart-card-title">Bar Chart</h5>
-                                        <p class="chart-card-subtitle">Monthly value split</p>
+                                        <h5 class="chart-card-title" id="barChartTitle">Bar Chart</h5>
+                                        <p class="chart-card-subtitle" id="barChartSubTitle">Monthly value split</p>
                                     </div>
                                     <div class="row">
                                         <div class="col-4"><div class="chart-stat"><div class="value" id="monthPurchase">₹0.00</div><div class="label">Purchase</div></div></div>
@@ -300,12 +300,12 @@ $page_title = 'Dashboard | Universal Trading';
                             </div>
                         </div>
 
-                        <div class="col-xl-6">
+                        <div class="col-xl-6" id="stackedChartCardWrap">
                             <div class="card dashboard-card">
                                 <div class="card-body">
                                     <div class="mb-2">
-                                        <h5 class="chart-card-title">Stacked Area Chart</h5>
-                                        <p class="chart-card-subtitle">Sales vs collection trend</p>
+                                        <h5 class="chart-card-title" id="stackedChartTitle">Stacked Area Chart</h5>
+                                        <p class="chart-card-subtitle" id="stackedChartSubTitle">Sales vs collection trend</p>
                                     </div>
                                     <div class="row">
                                         <div class="col-4"><div class="chart-stat"><div class="value" id="stackTodayCollection">₹0.00</div><div class="label">Collection</div></div></div>
@@ -339,7 +339,7 @@ $page_title = 'Dashboard | Universal Trading';
                             </div>
                         </div>
 
-                        <div class="col-xl-4">
+                        <div class="col-xl-4" id="lowStockProductsCardWrap">
                             <div class="card dashboard-card">
                                 <div class="card-body">
                                     <h5 class="chart-card-title">Low Stock Products</h5>

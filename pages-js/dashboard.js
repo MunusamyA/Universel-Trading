@@ -56,11 +56,24 @@ $(document).ready(function () {
 
         if (currentShowOperations) {
             $('.business-only-action').removeClass('d-none');
-            $('#quickActionsCardWrap, #topDueCustomersCardWrap, #recentSalesCardWrap').removeClass('d-none');
+            $('#quickActionsCardWrap, #topDueCustomersCardWrap, #lowStockProductsCardWrap, #recentSalesCardWrap').removeClass('d-none');
         } else {
             $('.business-only-action').addClass('d-none');
-            $('#quickActionsCardWrap, #topDueCustomersCardWrap, #recentSalesCardWrap').addClass('d-none');
+            $('#quickActionsCardWrap, #topDueCustomersCardWrap, #lowStockProductsCardWrap, #recentSalesCardWrap').addClass('d-none');
             $('#recentSalesTable').html('');
+        }
+
+        // Platform owner dashboard should not show customer/business operational stats.
+        if (currentIsPlatform) {
+            $('#dashboardKpiRow').addClass('d-none');
+            $('#areaMonthSales, #quotationCount, #monthPurchase, #stackTodayCollection')
+                .closest('.row')
+                .addClass('d-none');
+        } else {
+            $('#dashboardKpiRow').removeClass('d-none');
+            $('#areaMonthSales, #quotationCount, #monthPurchase, #stackTodayCollection')
+                .closest('.row')
+                .removeClass('d-none');
         }
 
         let scopeName = context.scope_name || context.branch_name || context.business_name || 'Dashboard';
@@ -131,6 +144,26 @@ $(document).ready(function () {
 
         $('#areaChart, #donutChart, #barChart, #stackedAreaChart').empty();
 
+        if (areaChart) { areaChart.destroy(); }
+        if (donutChart) { donutChart.destroy(); }
+        if (barChart) { barChart.destroy(); }
+        if (stackedAreaChart) { stackedAreaChart.destroy(); }
+
+        if (currentIsPlatform) {
+            renderPlatformCharts(charts, metrics || {});
+            return;
+        }
+
+        $('#areaChartCardWrap, #donutChartCardWrap, #barChartCardWrap, #stackedChartCardWrap').removeClass('d-none');
+        $('#areaChartTitle').text('Area Chart');
+        $('#areaChartSubTitle').text('Sales trend overview');
+        $('#donutChartTitle').text('Donut Chart');
+        $('#donutChartSubTitle').text('Document distribution');
+        $('#barChartTitle').text('Bar Chart');
+        $('#barChartSubTitle').text('Monthly value split');
+        $('#stackedChartTitle').text('Stacked Area Chart');
+        $('#stackedChartSubTitle').text('Sales vs collection trend');
+
         let salesLabels = charts.salesLabels || ['No Data'];
         let salesData = charts.salesData || [0];
         let collectionData = charts.collectionData || [0];
@@ -138,11 +171,6 @@ $(document).ready(function () {
         let docCounts = charts.docCounts || [];
         let splitLabels = charts.splitLabels || ['Sales', 'Purchase', 'Expense'];
         let splitData = charts.splitData || [0, 0, 0];
-
-        if (areaChart) { areaChart.destroy(); }
-        if (donutChart) { donutChart.destroy(); }
-        if (barChart) { barChart.destroy(); }
-        if (stackedAreaChart) { stackedAreaChart.destroy(); }
 
         areaChart = c3.generate({
             bindto: '#areaChart',
@@ -258,6 +286,105 @@ $(document).ready(function () {
             padding: { left: 78, right: 24 }
         });
 
+        flushChartsLater();
+    }
+
+    function renderPlatformCharts(charts, metrics) {
+        $('#areaChartCardWrap, #donutChartCardWrap, #barChartCardWrap').removeClass('d-none');
+        $('#stackedChartCardWrap').addClass('d-none');
+
+        $('#areaChartTitle').text('Platform Overview');
+        $('#areaChartSubTitle').text('Total businesses, branches, users and customers');
+        $('#donutChartTitle').text('Business Status');
+        $('#donutChartSubTitle').text('Active and inactive businesses');
+        $('#barChartTitle').text('Platform Master Data');
+        $('#barChartSubTitle').text('Products, suppliers, customers and branches');
+
+        let platformMetricLabels = charts.platformMetricLabels || charts.salesLabels || ['Businesses', 'Branches', 'Users', 'Customers'];
+        let platformMetricData = charts.platformMetricData || charts.salesData || [0, 0, 0, 0];
+        let platformStatusLabels = charts.platformStatusLabels || charts.docLabels || ['Active Businesses', 'Inactive Businesses'];
+        let platformStatusData = charts.platformStatusData || charts.docCounts || [0, 0];
+        let platformMasterLabels = charts.platformMasterLabels || charts.splitLabels || ['Products', 'Suppliers', 'Customers', 'Branches'];
+        let platformMasterData = charts.platformMasterData || charts.splitData || [0, 0, 0, 0];
+
+        areaChart = c3.generate({
+            bindto: '#areaChart',
+            size: {height: 270},
+            data: {
+                x: 'x',
+                columns: [
+                    ['x'].concat(platformMetricLabels),
+                    ['Count'].concat(platformMetricData)
+                ],
+                type: 'bar'
+            },
+            color: { pattern: ['#51b4d4'] },
+            bar: { width: { ratio: 0.45 } },
+            axis: {
+                x: { type: 'category' },
+                y: { tick: { count: 5, format: function (d) { return Number(d || 0).toLocaleString('en-IN'); } } }
+            },
+            legend: { show: false },
+            grid: { y: { show: true } },
+            transition: { duration: 0 },
+            tooltip: { format: { value: function (v) { return numberFormat(v); } } },
+            padding: { left: 60, right: 24 }
+        });
+
+        let statusColumns = [];
+        for (let i = 0; i < platformStatusLabels.length; i++) {
+            statusColumns.push([platformStatusLabels[i], Number(platformStatusData[i] || 0)]);
+        }
+        if (!statusColumns.length) {
+            statusColumns = [['No Data', 1]];
+        }
+
+        donutChart = c3.generate({
+            bindto: '#donutChart',
+            size: {height: 270},
+            data: {
+                columns: statusColumns,
+                type: 'donut'
+            },
+            donut: {
+                title: 'Businesses ' + numberFormat((metrics.platform && metrics.platform.totalBusinesses) || 0),
+                width: 22,
+                label: { show: false }
+            },
+            legend: { position: 'bottom' },
+            transition: { duration: 0 },
+            padding: { top: 5, right: 20, bottom: 5, left: 20 },
+            tooltip: { format: { value: function (value) { return numberFormat(value) + ' records'; } } }
+        });
+
+        barChart = c3.generate({
+            bindto: '#barChart',
+            size: {height: 240},
+            data: {
+                x: 'x',
+                columns: [
+                    ['x'].concat(platformMasterLabels),
+                    ['Count'].concat(platformMasterData)
+                ],
+                type: 'bar'
+            },
+            color: { pattern: ['#51b4d4'] },
+            bar: { width: { ratio: 0.45 } },
+            axis: {
+                x: { type: 'category' },
+                y: { tick: { count: 5, format: function (d) { return Number(d || 0).toLocaleString('en-IN'); } } }
+            },
+            legend: { show: false },
+            grid: { y: { show: true } },
+            transition: { duration: 0 },
+            tooltip: { format: { value: function (v) { return numberFormat(v); } } },
+            padding: { left: 60, right: 24 }
+        });
+
+        flushChartsLater();
+    }
+
+    function flushChartsLater() {
         setTimeout(function () {
             if (areaChart) { areaChart.flush(); }
             if (donutChart) { donutChart.flush(); }

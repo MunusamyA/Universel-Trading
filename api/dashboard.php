@@ -282,6 +282,66 @@ function dashboardScopeSql(string $alias, int $businessId, int $branchId): strin
     return $where ? implode(' AND ', $where) : '1=1';
 }
 
+function dashboardStatusCount(PDO $pdo, string $table, int $status = 1): int
+{
+    if ($table === '' || !dashTableExists($pdo, $table)) {
+        return 0;
+    }
+
+    if (dashColumnExists($pdo, $table, 'status')) {
+        return (int)dashValue($pdo, "SELECT COUNT(*) FROM `$table` WHERE status = :status", [':status' => $status]);
+    }
+
+    return (int)dashValue($pdo, "SELECT COUNT(*) FROM `$table`");
+}
+
+function dashboardTotalCount(PDO $pdo, string $table): int
+{
+    if ($table === '' || !dashTableExists($pdo, $table)) {
+        return 0;
+    }
+
+    return (int)dashValue($pdo, "SELECT COUNT(*) FROM `$table`");
+}
+
+function dashboardPlatformStats(PDO $pdo): array
+{
+    $businessTable = dashboardBusinessTable($pdo);
+
+    $totalBusinesses = dashboardTotalCount($pdo, $businessTable);
+    $activeBusinesses = 0;
+
+    if ($businessTable !== '') {
+        $activeWhere = dashboardBusinessActiveWhere($pdo, $businessTable);
+        $activeBusinesses = (int)dashValue($pdo, "SELECT COUNT(*) FROM `$businessTable` $activeWhere");
+    }
+
+    $inactiveBusinesses = max(0, $totalBusinesses - $activeBusinesses);
+
+    $totalBranches = dashboardTotalCount($pdo, 'branches');
+    $activeBranches = dashboardStatusCount($pdo, 'branches', 1);
+
+    $totalUsers = dashboardTotalCount($pdo, 'users');
+    $activeUsers = dashboardStatusCount($pdo, 'users', 1);
+
+    $totalCustomers = dashboardTotalCount($pdo, 'customers');
+    $totalProducts = dashboardTotalCount($pdo, 'products');
+    $totalSuppliers = dashboardTotalCount($pdo, 'suppliers');
+
+    return [
+        'totalBusinesses' => $totalBusinesses,
+        'activeBusinesses' => $activeBusinesses,
+        'inactiveBusinesses' => $inactiveBusinesses,
+        'totalBranches' => $totalBranches,
+        'activeBranches' => $activeBranches,
+        'totalUsers' => $totalUsers,
+        'activeUsers' => $activeUsers,
+        'totalCustomers' => $totalCustomers,
+        'totalProducts' => $totalProducts,
+        'totalSuppliers' => $totalSuppliers
+    ];
+}
+
 $isPlatformOwnerDashboard = dashboardIsPlatformOwner();
 $sessionBusinessId = function_exists('currentBusinessId') ? (int)currentBusinessId() : (int)($_SESSION['business_id'] ?? 0);
 $assignedBranchId = (int)($_SESSION['branch_id'] ?? (function_exists('currentBranchId') ? currentBranchId() : 0));
@@ -377,6 +437,8 @@ $hasCustomers = dashTableExists($pdo, 'customers');
 $hasProducts = dashTableExists($pdo, 'products');
 $hasSuppliers = dashTableExists($pdo, 'suppliers');
 $hasPurchaseItems = dashTableExists($pdo, 'purchase_items');
+
+$platformStats = $isPlatformOwnerDashboard ? dashboardPlatformStats($pdo) : [];
 
 $salesWhere = $scopeSql . " AND status IN (1,2)";
 $activeWhere = $scopeSql . " AND status = 1";
@@ -591,6 +653,47 @@ foreach ($pipeline as $type => $info) {
     $chartDocCounts[] = (int)$info['count'];
 }
 
+$platformMetricLabels = [];
+$platformMetricData = [];
+$platformMasterLabels = [];
+$platformMasterData = [];
+$platformStatusLabels = [];
+$platformStatusData = [];
+
+if ($isPlatformOwnerDashboard) {
+    /*
+     * Platform Owner chart data must be platform-level only.
+     * Do not show customer/business sales, invoice, receivable or collection charts.
+     */
+    $platformMetricLabels = ['Businesses', 'Branches', 'Users', 'Customers'];
+    $platformMetricData = [
+        (int)($platformStats['totalBusinesses'] ?? 0),
+        (int)($platformStats['totalBranches'] ?? 0),
+        (int)($platformStats['totalUsers'] ?? 0),
+        (int)($platformStats['totalCustomers'] ?? 0)
+    ];
+
+    $platformMasterLabels = ['Products', 'Suppliers', 'Customers', 'Branches'];
+    $platformMasterData = [
+        (int)($platformStats['totalProducts'] ?? 0),
+        (int)($platformStats['totalSuppliers'] ?? 0),
+        (int)($platformStats['totalCustomers'] ?? 0),
+        (int)($platformStats['totalBranches'] ?? 0)
+    ];
+
+    $platformStatusLabels = ['Active Businesses', 'Inactive Businesses'];
+    $platformStatusData = [
+        (int)($platformStats['activeBusinesses'] ?? 0),
+        (int)($platformStats['inactiveBusinesses'] ?? 0)
+    ];
+
+    $chartSalesLabels = $platformMetricLabels;
+    $chartSalesData = $platformMetricData;
+    $chartCollectionData = [];
+    $chartDocLabels = $platformStatusLabels;
+    $chartDocCounts = $platformStatusData;
+}
+
 $quickLinks = $isPlatformOwnerDashboard ? [] : [
     ['label' => 'New Sale', 'url' => 'pages/sales.php', 'icon' => 'mdi mdi-cart-plus', 'class' => 'btn-primary'],
     ['label' => 'Sales List', 'url' => 'pages/sales-list.php', 'icon' => 'mdi mdi-format-list-bulleted', 'class' => 'btn-info'],
@@ -633,6 +736,8 @@ jsonResponse(true, 'Dashboard loaded successfully.', [
         'can_switch_business' => 0,
         'can_switch_branch' => (!$isPlatformOwnerDashboard && $canSwitch) ? 1 : 0,
         'show_operations' => $isPlatformOwnerDashboard ? 0 : 1,
+        'show_operational_stats' => $isPlatformOwnerDashboard ? 0 : 1,
+        'show_platform_charts' => $isPlatformOwnerDashboard ? 1 : 0,
         'businesses' => [],
         'branches' => $responseBranches
     ],
@@ -653,7 +758,8 @@ jsonResponse(true, 'Dashboard loaded successfully.', [
         'lowStockCount' => $lowStockCount,
         'quotationValue' => moneyValue($quotationValue),
         'finalInvoiceValue' => moneyValue($finalInvoiceValue),
-        'totalPipelineCount' => $totalPipelineCount
+        'totalPipelineCount' => $totalPipelineCount,
+        'platform' => $platformStats
     ],
     'pipeline' => [
         'quotationCount' => (int)$pipeline[1]['count'],
@@ -668,8 +774,14 @@ jsonResponse(true, 'Dashboard loaded successfully.', [
         'collectionData' => $chartCollectionData,
         'docLabels' => $chartDocLabels,
         'docCounts' => $chartDocCounts,
-        'splitLabels' => ['Sales', 'Purchase', 'Expense'],
-        'splitData' => [moneyValue($monthSales), moneyValue($monthPurchase), moneyValue($monthExpense)]
+        'splitLabels' => $isPlatformOwnerDashboard ? $platformMasterLabels : ['Sales', 'Purchase', 'Expense'],
+        'splitData' => $isPlatformOwnerDashboard ? $platformMasterData : [moneyValue($monthSales), moneyValue($monthPurchase), moneyValue($monthExpense)],
+        'platformMetricLabels' => $platformMetricLabels,
+        'platformMetricData' => $platformMetricData,
+        'platformMasterLabels' => $platformMasterLabels,
+        'platformMasterData' => $platformMasterData,
+        'platformStatusLabels' => $platformStatusLabels,
+        'platformStatusData' => $platformStatusData
     ],
     'recentSales' => array_map(function ($row) {
         return [
