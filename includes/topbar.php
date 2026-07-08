@@ -229,13 +229,13 @@ if ($profileInitial === '') {
             </div>
 
             <!-- Right Bar Toggle -->
-            <div class="dropdown d-inline-block">
+            <!-- <div class="dropdown d-inline-block">
                 <button type="button"
                         class="btn header-item noti-icon right-bar-toggle waves-effect"
                         aria-label="Settings panel">
                     <i class="mdi mdi-spin mdi-cog"></i>
                 </button>
-            </div>
+            </div> -->
 
         </div>
 
