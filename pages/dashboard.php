@@ -146,6 +146,15 @@ $page_title = 'Dashboard | Universal Trading';
 
                             <div class="page-title-right">
                                 <div class="d-flex flex-wrap align-items-center gap-2">
+                                    <div id="dashboardBusinessWrap" class="d-none">
+                                        <div class="input-group input-group-sm" style="width: 285px;">
+                                            <span class="input-group-text"><i class="mdi mdi-office-building"></i></span>
+                                            <select class="form-select" id="dashboardBusinessSelect">
+                                                <option value="">Loading...</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
                                     <div id="dashboardBranchWrap" class="d-none">
                                         <div class="input-group input-group-sm" style="width: 275px;">
                                             <span class="input-group-text"><i class="mdi mdi-source-branch"></i></span>

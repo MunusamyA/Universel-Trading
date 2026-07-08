@@ -119,8 +119,96 @@ function docBadgeClassText($type)
     return $map[(int)$type] ?? 'bg-secondary-subtle text-secondary';
 }
 
+function dashboardIsPlatformOwner(): bool
+{
+    return function_exists('isPlatformOwner') && isPlatformOwner();
+}
+
+function dashboardBusinessTable(PDO $pdo): string
+{
+    foreach (['businesses', 'business', 'business_details', 'business_master'] as $table) {
+        if (dashTableExists($pdo, $table)) {
+            return $table;
+        }
+    }
+
+    return '';
+}
+
+function dashboardBusinessNameColumn(PDO $pdo, string $table): string
+{
+    foreach (['business_name', 'company_name', 'shop_name', 'name', 'firm_name'] as $column) {
+        if (dashColumnExists($pdo, $table, $column)) {
+            return $column;
+        }
+    }
+
+    return 'id';
+}
+
+function dashboardBusinessCodeColumn(PDO $pdo, string $table): string
+{
+    foreach (['business_code', 'code'] as $column) {
+        if (dashColumnExists($pdo, $table, $column)) {
+            return $column;
+        }
+    }
+
+    return '';
+}
+
+function dashboardBusinessActiveWhere(PDO $pdo, string $table): string
+{
+    $where = [];
+
+    if (dashColumnExists($pdo, $table, 'status')) {
+        $where[] = 'status = 1';
+    }
+
+    if (dashColumnExists($pdo, $table, 'approval_status')) {
+        $where[] = 'approval_status = 1';
+    }
+
+    return $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+}
+
+function dashboardLoadBusinesses(PDO $pdo): array
+{
+    $table = dashboardBusinessTable($pdo);
+    if ($table === '') {
+        return [];
+    }
+
+    $nameColumn = dashboardBusinessNameColumn($pdo, $table);
+    $codeColumn = dashboardBusinessCodeColumn($pdo, $table);
+    $codeSelect = $codeColumn !== '' ? ", `$codeColumn` AS business_code" : ", '' AS business_code";
+    $where = dashboardBusinessActiveWhere($pdo, $table);
+
+    return dashRows($pdo, "
+        SELECT id, `$nameColumn` AS business_name $codeSelect
+        FROM `$table`
+        $where
+        ORDER BY business_name ASC
+    ");
+}
+
+function dashboardBusinessNameFromRows(array $businesses, int $businessId): string
+{
+    foreach ($businesses as $business) {
+        if ((int)($business['id'] ?? 0) === $businessId) {
+            return (string)($business['business_name'] ?? ('Business #' . $businessId));
+        }
+    }
+
+    return $businessId > 0 ? ('Business #' . $businessId) : 'Platform Overall';
+}
+
 function canSwitchDashboardBranch(PDO $pdo, $businessId, $assignedBranchId)
 {
+    if (dashboardIsPlatformOwner()) {
+        return true;
+    }
+
     if ($businessId <= 0 || $assignedBranchId <= 0) {
         return false;
     }
@@ -158,24 +246,19 @@ function canSwitchDashboardBranch(PDO $pdo, $businessId, $assignedBranchId)
     }
 }
 
-$businessId = function_exists('currentBusinessId') ? (int)currentBusinessId() : (int)($_SESSION['business_id'] ?? 0);
-$assignedBranchId = (int)($_SESSION['branch_id'] ?? (function_exists('currentBranchId') ? currentBranchId() : 0));
-$assignedBranchName = $_SESSION['branch_name'] ?? (function_exists('currentBranchName') ? currentBranchName() : '');
+function dashboardLoadBranches(PDO $pdo, int $businessId): array
+{
+    if ($businessId <= 0 || !dashTableExists($pdo, 'branches')) {
+        return [];
+    }
 
-if ($businessId <= 0 || $assignedBranchId <= 0) {
-    jsonResponse(false, 'Invalid business or branch session.');
-}
+    $approvalSql = dashColumnExists($pdo, 'branches', 'approval_status') ? ' AND approval_status = 1 ' : '';
 
-$canSwitch = canSwitchDashboardBranch($pdo, $businessId, $assignedBranchId);
-$requestedBranchId = isset($_POST['branch_id']) ? (int)$_POST['branch_id'] : (isset($_GET['branch_id']) ? (int)$_GET['branch_id'] : $assignedBranchId);
-
-$branches = [];
-if ($canSwitch) {
-    $branches = dashRows($pdo, "
+    return dashRows($pdo, "
         SELECT id, branch_code, branch_name, parent_branch_id
         FROM branches
         WHERE business_id = :business_id
-          AND approval_status = 1
+          $approvalSql
           AND status = 1
         ORDER BY
           CASE WHEN parent_branch_id IS NULL THEN 0 ELSE 1 END,
@@ -183,35 +266,106 @@ if ($canSwitch) {
     ", [':business_id' => $businessId]);
 }
 
-$isOverall = false;
-$branchId = $assignedBranchId;
-$activeBranchName = $assignedBranchName;
+function dashboardScopeSql(string $alias, int $businessId, int $branchId): string
+{
+    $prefix = $alias !== '' ? ($alias . '.') : '';
+    $where = [];
 
-if ($canSwitch && $requestedBranchId === 0) {
-    $isOverall = true;
-    $branchId = 0;
-    $activeBranchName = 'Overall - All Branches';
-} elseif ($canSwitch) {
-    foreach ($branches as $branch) {
-        if ((int)$branch['id'] === $requestedBranchId) {
-            $branchId = (int)$branch['id'];
-            $activeBranchName = $branch['branch_name'];
-            break;
-        }
+    if ($businessId > 0) {
+        $where[] = $prefix . 'business_id = :business_id';
     }
-} else {
-    $branchId = $assignedBranchId;
-    $activeBranchName = $assignedBranchName;
+
+    if ($branchId > 0) {
+        $where[] = $prefix . 'branch_id = :branch_id';
+    }
+
+    return $where ? implode(' AND ', $where) : '1=1';
 }
 
-$scope = [':business_id' => $businessId];
-if (!$isOverall) {
+$isPlatformOwnerDashboard = dashboardIsPlatformOwner();
+$sessionBusinessId = function_exists('currentBusinessId') ? (int)currentBusinessId() : (int)($_SESSION['business_id'] ?? 0);
+$assignedBranchId = (int)($_SESSION['branch_id'] ?? (function_exists('currentBranchId') ? currentBranchId() : 0));
+$assignedBranchName = $_SESSION['branch_name'] ?? (function_exists('currentBranchName') ? currentBranchName() : '');
+
+if (!$isPlatformOwnerDashboard && ($sessionBusinessId <= 0 || $assignedBranchId <= 0)) {
+    jsonResponse(false, 'Invalid business or branch session.');
+}
+
+$requestBusinessId = isset($_POST['business_id'])
+    ? (int)$_POST['business_id']
+    : (isset($_GET['business_id']) ? (int)$_GET['business_id'] : ($isPlatformOwnerDashboard ? 0 : $sessionBusinessId));
+
+$requestedBranchId = isset($_POST['branch_id'])
+    ? (int)$_POST['branch_id']
+    : (isset($_GET['branch_id']) ? (int)$_GET['branch_id'] : ($isPlatformOwnerDashboard ? 0 : $assignedBranchId));
+
+$businesses = $isPlatformOwnerDashboard ? dashboardLoadBusinesses($pdo) : [];
+$businessId = $isPlatformOwnerDashboard ? max(0, $requestBusinessId) : $sessionBusinessId;
+$activeBusinessName = $isPlatformOwnerDashboard
+    ? dashboardBusinessNameFromRows($businesses, $businessId)
+    : ($_SESSION['business_name'] ?? ($_SESSION['company_name'] ?? 'Business'));
+
+$canSwitch = $isPlatformOwnerDashboard || canSwitchDashboardBranch($pdo, $sessionBusinessId, $assignedBranchId);
+$branches = [];
+$branchId = 0;
+$activeBranchName = 'Platform Overall';
+$isOverall = false;
+
+if ($isPlatformOwnerDashboard) {
+    if ($businessId > 0) {
+        $branches = dashboardLoadBranches($pdo, $businessId);
+        $branchId = 0;
+        $activeBranchName = $activeBusinessName . ' - All Branches';
+
+        if ($requestedBranchId > 0) {
+            foreach ($branches as $branch) {
+                if ((int)$branch['id'] === $requestedBranchId) {
+                    $branchId = (int)$branch['id'];
+                    $activeBranchName = $branch['branch_name'];
+                    break;
+                }
+            }
+        }
+    } else {
+        $isOverall = true;
+        $branchId = 0;
+        $activeBranchName = 'Platform Overall - All Businesses';
+    }
+} else {
+    $businessId = $sessionBusinessId;
+    $branchId = $assignedBranchId;
+    $activeBranchName = $assignedBranchName;
+
+    if ($canSwitch) {
+        $branches = dashboardLoadBranches($pdo, $businessId);
+
+        if ($requestedBranchId === 0) {
+            $isOverall = true;
+            $branchId = 0;
+            $activeBranchName = 'Overall - All Branches';
+        } else {
+            foreach ($branches as $branch) {
+                if ((int)$branch['id'] === $requestedBranchId) {
+                    $branchId = (int)$branch['id'];
+                    $activeBranchName = $branch['branch_name'];
+                    break;
+                }
+            }
+        }
+    }
+}
+
+$scope = [];
+if ($businessId > 0) {
+    $scope[':business_id'] = $businessId;
+}
+if ($branchId > 0) {
     $scope[':branch_id'] = $branchId;
 }
 
-$branchSql = $isOverall ? '' : ' AND branch_id = :branch_id ';
-$branchSqlS = $isOverall ? '' : ' AND s.branch_id = :branch_id ';
-$branchSqlP = $isOverall ? '' : ' AND p.branch_id = :branch_id ';
+$scopeSql = dashboardScopeSql('', $businessId, $branchId);
+$scopeSqlS = dashboardScopeSql('s', $businessId, $branchId);
+$scopeSqlP = dashboardScopeSql('p', $businessId, $branchId);
 
 $today = date('Y-m-d');
 $monthStart = date('Y-m-01');
@@ -227,8 +381,8 @@ $hasProducts = dashTableExists($pdo, 'products');
 $hasSuppliers = dashTableExists($pdo, 'suppliers');
 $hasPurchaseItems = dashTableExists($pdo, 'purchase_items');
 
-$salesWhere = "business_id = :business_id " . $branchSql . " AND status IN (1,2)";
-$activeWhere = "business_id = :business_id " . $branchSql . " AND status = 1";
+$salesWhere = $scopeSql . " AND status IN (1,2)";
+$activeWhere = $scopeSql . " AND status = 1";
 
 $todaySales = $hasSales ? (float)dashValue($pdo, "SELECT COALESCE(SUM(grand_total),0) FROM sales WHERE $salesWhere AND document_type IN (4,5) AND sales_date = CURDATE()", $scope) : 0;
 $todaySalesCount = $hasSales ? (int)dashValue($pdo, "SELECT COUNT(*) FROM sales WHERE $salesWhere AND document_type IN (4,5) AND sales_date = CURDATE()", $scope) : 0;
@@ -273,10 +427,9 @@ if ($hasProducts && $hasPurchaseItems) {
         LEFT JOIN purchase_items pi
                ON pi.product_id = p.id
               AND pi.business_id = p.business_id
-              " . ($isOverall ? "" : " AND pi.branch_id = p.branch_id ") . "
+              AND pi.branch_id = p.branch_id
               AND pi.status = 1
-        WHERE p.business_id = :business_id
-          " . $branchSqlP . "
+        WHERE $scopeSqlP
           AND p.status = 1
         GROUP BY p.id, p.product_code, p.product_name, p.minimum_stock, p.initial_stock
         HAVING p.minimum_stock > 0 AND current_stock <= p.minimum_stock
@@ -356,8 +509,7 @@ $recentSales = $hasSales ? dashRows($pdo, "
     SELECT s.id, s.sales_no, s.document_type, s.sales_date, s.grand_total, s.due_amount, c.customer_name
     FROM sales s
     LEFT JOIN customers c ON c.id = s.customer_id
-    WHERE s.business_id = :business_id
-      " . $branchSqlS . "
+    WHERE $scopeSqlS
       AND s.status IN (1,2)
     ORDER BY s.id DESC
     LIMIT 8
@@ -388,8 +540,7 @@ if ($hasSalesPayments) {
     $rows = dashRows($pdo, "
         SELECT payment_date, COALESCE(SUM(payment_amount),0) AS amount
         FROM sales_payments
-        WHERE business_id = :business_id
-          " . $branchSql . "
+        WHERE $scopeSql
           AND status = 1
           AND payment_date BETWEEN :from_date AND :to_date
         GROUP BY payment_date
@@ -410,8 +561,7 @@ if ($hasSalesPayments) {
     $rows = dashRows($pdo, "
         SELECT payment_date, COALESCE(SUM($paymentAmountColumn),0) AS amount
         FROM customer_payments
-        WHERE business_id = :business_id
-          " . $branchSql . "
+        WHERE $scopeSql
           AND status = 1
           AND payment_date BETWEEN :from_date AND :to_date
         GROUP BY payment_date
@@ -448,11 +598,31 @@ $quickLinks = [
     ['label' => 'Customers', 'url' => 'pages/customers.php', 'icon' => 'mdi mdi-account-group', 'class' => 'btn-warning']
 ];
 
+$responseBusinesses = [];
+if ($isPlatformOwnerDashboard) {
+    $responseBusinesses[] = [
+        'id' => 0,
+        'label' => 'Platform Overall - All Businesses'
+    ];
+
+    foreach ($businesses as $business) {
+        $label = $business['business_name'] ?? ('Business #' . (int)$business['id']);
+        if (!empty($business['business_code'])) {
+            $label .= ' (' . $business['business_code'] . ')';
+        }
+
+        $responseBusinesses[] = [
+            'id' => (int)$business['id'],
+            'label' => $label
+        ];
+    }
+}
+
 $responseBranches = [];
-if ($canSwitch) {
+if ($canSwitch && (!$isPlatformOwnerDashboard || $businessId > 0)) {
     $responseBranches[] = [
         'id' => 0,
-        'label' => 'Overall - All Branches'
+        'label' => $isPlatformOwnerDashboard ? ($activeBusinessName . ' - All Branches') : 'Overall - All Branches'
     ];
 
     foreach ($branches as $branch) {
@@ -471,11 +641,16 @@ if ($canSwitch) {
 
 jsonResponse(true, 'Dashboard loaded successfully.', [
     'context' => [
+        'is_platform' => $isPlatformOwnerDashboard ? 1 : 0,
         'business_id' => $businessId,
+        'business_name' => $activeBusinessName,
         'branch_id' => $branchId,
         'branch_name' => $activeBranchName,
-        'is_overall' => $isOverall ? 1 : 0,
+        'scope_name' => $activeBranchName,
+        'is_overall' => ($isOverall || $branchId === 0) ? 1 : 0,
+        'can_switch_business' => $isPlatformOwnerDashboard ? 1 : 0,
         'can_switch_branch' => $canSwitch ? 1 : 0,
+        'businesses' => $responseBusinesses,
         'branches' => $responseBranches
     ],
     'metrics' => [

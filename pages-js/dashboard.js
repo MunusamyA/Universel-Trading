@@ -1,6 +1,7 @@
 $(document).ready(function () {
     $('#preloader').fadeOut('slow');
 
+    let currentBusinessId = null;
     let currentBranchId = null;
     let areaChart = null;
     let donutChart = null;
@@ -45,23 +46,42 @@ $(document).ready(function () {
     }
 
     function renderBranchContext(context) {
+        context = context || {};
+        currentBusinessId = parseInt(context.business_id || 0, 10);
         currentBranchId = parseInt(context.branch_id || 0, 10);
 
-        if (parseInt(context.can_switch_branch || 0, 10) === 1) {
-            let options = '';
-            (context.branches || []).forEach(function (branch) {
-                let selected = parseInt(branch.id, 10) === currentBranchId ? ' selected' : '';
-                options += '<option value="' + parseInt(branch.id, 10) + '"' + selected + '>' + escapeHtml(branch.label) + '</option>';
+        let scopeName = context.scope_name || context.branch_name || context.business_name || 'Dashboard';
+        $('#dashboardBranchName').text(scopeName);
+
+        if (parseInt(context.can_switch_business || 0, 10) === 1) {
+            let businessOptions = '';
+            (context.businesses || []).forEach(function (business) {
+                let businessId = parseInt(business.id || 0, 10);
+                let selected = businessId === currentBusinessId ? ' selected' : '';
+                businessOptions += '<option value="' + businessId + '"' + selected + '>' + escapeHtml(business.label) + '</option>';
             });
 
-            $('#dashboardBranchSelect').html(options);
-            $('#dashboardBranchWrap').removeClass('d-none');
-            $('#dashboardBranchBadge').addClass('d-none');
+            $('#dashboardBusinessSelect').html(businessOptions || '<option value="0">Platform Overall - All Businesses</option>');
+            $('#dashboardBusinessWrap').removeClass('d-none');
         } else {
-            $('#dashboardBranchName').text(context.branch_name || 'Branch');
-            $('#dashboardBranchBadge').removeClass('d-none');
+            $('#dashboardBusinessWrap').addClass('d-none');
+        }
+
+        if (parseInt(context.can_switch_branch || 0, 10) === 1 && (context.branches || []).length > 0) {
+            let branchOptions = '';
+            (context.branches || []).forEach(function (branch) {
+                let branchId = parseInt(branch.id || 0, 10);
+                let selected = branchId === currentBranchId ? ' selected' : '';
+                branchOptions += '<option value="' + branchId + '"' + selected + '>' + escapeHtml(branch.label) + '</option>';
+            });
+
+            $('#dashboardBranchSelect').html(branchOptions);
+            $('#dashboardBranchWrap').removeClass('d-none');
+        } else {
             $('#dashboardBranchWrap').addClass('d-none');
         }
+
+        $('#dashboardBranchBadge').removeClass('d-none');
     }
 
     function renderMetrics(metrics, pipeline) {
@@ -297,17 +317,26 @@ $(document).ready(function () {
         $('#recentSalesTable').html(html);
     }
 
-    function loadDashboard(branchId) {
+    function loadDashboard(businessId, branchId) {
         showLoading();
+
+        let requestData = {
+            action: 'load_dashboard'
+        };
+
+        if (businessId !== null && businessId !== undefined && businessId !== '') {
+            requestData.business_id = businessId;
+        }
+
+        if (branchId !== null && branchId !== undefined && branchId !== '') {
+            requestData.branch_id = branchId;
+        }
 
         $.ajax({
             url: window.BASE_URL + 'api/dashboard.php',
             type: 'GET',
             dataType: 'json',
-            data: {
-                action: 'load_dashboard',
-                branch_id: branchId
-            },
+            data: requestData,
             success: function (response) {
                 if (response.status === true) {
                     let data = response.data || {};
@@ -342,12 +371,16 @@ $(document).ready(function () {
         });
     }
 
+    $('#dashboardBusinessSelect').on('change', function () {
+        loadDashboard($(this).val(), 0);
+    });
+
     $('#dashboardBranchSelect').on('change', function () {
-        loadDashboard($(this).val());
+        loadDashboard(currentBusinessId, $(this).val());
     });
 
     $('#refreshDashboardBtn').on('click', function () {
-        loadDashboard(currentBranchId);
+        loadDashboard(currentBusinessId, currentBranchId);
     });
 
     let chartResizeTimer = null;
@@ -361,5 +394,5 @@ $(document).ready(function () {
         }, 200);
     });
 
-    loadDashboard('');
+    loadDashboard(null, null);
 });

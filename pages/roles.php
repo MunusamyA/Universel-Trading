@@ -255,33 +255,13 @@ if (file_exists($preloaderPath)) {
     </div>
 </div>
 
-<?php
-$rightSidebarPath1 = BASE_PATH . 'includes/right-sidebar.php';
-$rightSidebarPath2 = BASE_PATH . 'includes/rightsiderbar.php';
-
-if (file_exists($rightSidebarPath1)) {
-    include $rightSidebarPath1;
-} elseif (file_exists($rightSidebarPath2)) {
-    include $rightSidebarPath2;
-}
-?>
-
-<?php
-$scriptsPath1 = BASE_PATH . 'includes/scripts.php';
-$scriptsPath2 = BASE_PATH . 'includes/script.php';
-
-if (file_exists($scriptsPath1)) {
-    include $scriptsPath1;
-} elseif (file_exists($scriptsPath2)) {
-    include $scriptsPath2;
-}
-?>
-
+<?php include BASE_PATH . 'includes/rightbar.php'; ?>
+<?php include BASE_PATH . 'includes/scripts.php'; ?>
 <script>
-    window.BASE_URL = <?= json_encode(BASE_URL); ?>;
+    window.BASE_URL = "<?= BASE_URL; ?>";
+    window.USER_TYPE = "<?= escapeHtml(currentUserType()); ?>";
 </script>
-
-<script src="<?= BASE_URL; ?>pages-js/roles.js?v=<?= time(); ?>"></script>
+<script src="<?= BASE_URL; ?>pages-js/branch_approvals.js"></script>
 
 </body>
 </html>
