@@ -197,9 +197,9 @@ $page_title = 'Dashboard | Universal Trading';
                             <div class="card dashboard-card kpi-card mb-0">
                                 <div class="card-body d-flex justify-content-between align-items-start">
                                     <div>
-                                        <div class="kpi-title">Today Sales</div>
+                                        <div class="kpi-title">Today Sales Amount</div>
                                         <div class="kpi-value" id="todaySales">₹0.00</div>
-                                        <div class="kpi-sub"><span id="todaySalesCount">0</span> final/direct bills</div>
+                                        <div class="kpi-sub"><span id="todaySalesCount">0</span> sales bills today</div>
                                     </div>
                                     <div class="kpi-icon bg-soft-primary"><i class="mdi mdi-cash-register"></i></div>
                                 </div>
@@ -212,7 +212,7 @@ $page_title = 'Dashboard | Universal Trading';
                                     <div>
                                         <div class="kpi-title">Month Sales</div>
                                         <div class="kpi-value" id="monthSales">₹0.00</div>
-                                        <div class="kpi-sub"><span id="monthSalesCount">0</span> sales documents</div>
+                                        <div class="kpi-sub"><span id="monthSalesCount">0</span> sales bills this month</div>
                                     </div>
                                     <div class="kpi-icon bg-soft-success"><i class="mdi mdi-chart-line"></i></div>
                                 </div>

@@ -112,10 +112,10 @@ $(document).ready(function () {
     }
 
     function renderMetrics(metrics, pipeline) {
-        $('#todaySales').text(money(metrics.todaySales));
-        $('#todaySalesCount').text(numberFormat(metrics.todaySalesCount));
-        $('#monthSales').text(money(metrics.monthSales));
-        $('#monthSalesCount').text(numberFormat(metrics.monthSalesCount));
+        $('#todaySales').text(money(metrics.todaySales || 0));
+        $('#todaySalesCount').text(numberFormat(metrics.todaySalesCount || 0));
+        $('#monthSales').text(money(metrics.monthSales || 0));
+        $('#monthSalesCount').text(numberFormat(metrics.monthSalesCount || 0));
         $('#pendingReceivable').text(money(metrics.pendingReceivable));
         $('#todayCollection').text(money(metrics.todayCollection));
 

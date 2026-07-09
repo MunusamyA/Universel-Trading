@@ -246,8 +246,10 @@ function saveRecord(PDO $pdo)
         requireHsnPermission(3);
     }
 
-    $hsnCode = cleanInput($_POST['hsn_code'] ?? '');
+    $rawHsnCode = trim((string)($_POST['hsn_code'] ?? ''));
+    $hsnCode = cleanInput($rawHsnCode);
     $description = cleanInput($_POST['hsn_description'] ?? '');
+    $descriptionLength = function_exists('mb_strlen') ? mb_strlen($description, 'UTF-8') : strlen($description);
     $cgst = (float)($_POST['cgst_percentage'] ?? 0);
     $sgst = (float)($_POST['sgst_percentage'] ?? 0);
     $igst = (float)($_POST['igst_percentage'] ?? 0);
@@ -255,6 +257,14 @@ function saveRecord(PDO $pdo)
 
     if ($hsnCode === '') {
         jsonResponse(false, 'Please enter HSN code.');
+    }
+
+    if (!preg_match('/^[0-9]+$/', $hsnCode)) {
+        jsonResponse(false, 'HSN code must contain numbers only.');
+    }
+
+    if ($descriptionLength > 100) {
+        jsonResponse(false, 'Description can be maximum 100 characters only.');
     }
 
     if ($cgst < 0 || $sgst < 0 || $igst < 0) {

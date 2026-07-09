@@ -14,6 +14,14 @@ $(document).ready(function () {
         $(this).val($(this).val().toUpperCase());
     });
 
+    $(document).on('input', '#mobile', function () {
+        this.value = this.value.replace(/\D/g, '').slice(0, 10);
+    });
+
+    $(document).on('input', '#pincode', function () {
+        this.value = this.value.replace(/\D/g, '').slice(0, 6);
+    });
+
     $('#customerForm').on('submit', function (e) {
         e.preventDefault();
 
@@ -30,7 +38,13 @@ $(document).ready(function () {
         }
 
         let mobile = $.trim($('#mobile').val());
-        if (mobile !== '' && !/^[0-9]{10}$/.test(mobile)) {
+        if (mobile === '') {
+            showToastSafe('warning', 'Please enter mobile number.');
+            $('#mobile').focus();
+            return;
+        }
+
+        if (!/^[0-9]{10}$/.test(mobile)) {
             showToastSafe('warning', 'Please enter valid 10 digit mobile number.');
             $('#mobile').focus();
             return;
@@ -107,7 +121,7 @@ $(document).ready(function () {
                     $('#state').val(customer.state || 'Tamil Nadu');
                     $('#pincode').val(customer.pincode);
                     $('#opening_outstanding').val(parseFloat(customer.opening_outstanding || 0).toFixed(2));
-                    $('#status').val(customer.status);
+                    $('#status1').val(customer.status || 1);
 
                     loadZones(customer.zone_id);
                 } else {

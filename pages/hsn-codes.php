@@ -14,6 +14,27 @@ $page_title = 'HSN Codes | Universal ERP';
 
 <head>
     <?php include BASE_PATH . 'includes/head.php'; ?>
+    <style>
+        .hsn-table th,
+        .hsn-table td {
+            vertical-align: middle;
+        }
+
+        .hsn-code-cell {
+            white-space: nowrap;
+            font-weight: 600;
+        }
+
+        .hsn-description-col,
+        .hsn-description-cell {
+            min-width: 280px;
+            max-width: 460px;
+            white-space: normal !important;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+            line-height: 1.35;
+        }
+    </style>
 </head>
 
 <body data-sidebar="dark">
@@ -108,12 +129,12 @@ $page_title = 'HSN Codes | Universal ERP';
                         </div>
 
                         <div class="table-responsive">
-                            <table class="table table-centered table-nowrap mb-0">
+                            <table class="table table-centered mb-0 hsn-table">
                                 <thead>
                                     <tr>
                                         <th width="60">#</th>
                                         <th>HSN Code</th>
-                                        <th>Description</th>
+                                        <th class="hsn-description-col">Description</th>
                                         <th>CGST</th>
                                         <th>SGST</th>
                                         <th>IGST</th>
@@ -162,12 +183,14 @@ $page_title = 'HSN Codes | Universal ERP';
                             <label class="form-label">
                                 HSN Code <span class="text-danger">*</span>
                             </label>
-                            <input type="text" class="form-control" id="hsn_code" name="hsn_code">
+                            <input type="text" class="form-control" id="hsn_code" name="hsn_code" inputmode="numeric" pattern="[0-9]*" autocomplete="off">
+                            <small class="text-muted">Numbers only</small>
                         </div>
 
                         <div class="col-md-8">
                             <label class="form-label">Description</label>
-                            <input type="text" class="form-control" id="hsn_description" name="hsn_description">
+                            <input type="text" class="form-control" id="hsn_description" name="hsn_description" maxlength="100">
+                            <small class="text-muted">Maximum 100 characters</small>
                         </div>
 
                         <div class="col-md-3 mt-3">

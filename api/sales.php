@@ -3011,6 +3011,8 @@ function saveSale(PDO $pdo)
 
         $pdo->commit();
 
+        $editUrl = BASE_URL . 'pages/sales.php?id=' . (int)$saleId . '&mode=edit';
+
         jsonOk($isConvertMode ? 'Document updated successfully. No duplicate created.' : 'Sale saved successfully.', [
             'id' => $saleId,
             'sales_no' => $salesNo,
@@ -3018,6 +3020,9 @@ function saveSale(PDO $pdo)
             'grand_total' => $grandTotal,
             'paid_amount' => round2($paidAmount),
             'due_amount' => $dueAmount,
+            'edit_url' => $editUrl,
+            'redirect_url' => $editUrl,
+            'mode' => 'edit',
             'sale' => [
                 'id' => $saleId,
                 'sales_no' => $salesNo,
@@ -3414,7 +3419,7 @@ function computeItems(PDO $pdo, array $scope, array $items, $invoiceType, $shoul
         }
 
         $priceType = (int)($row['price_type'] ?? 1);
-        if (!in_array($priceType, [1, 2, 3], true)) {
+        if (!in_array($priceType, [1, 2], true)) {
             $priceType = 1;
         }
 
@@ -3432,7 +3437,7 @@ function computeItems(PDO $pdo, array $scope, array $items, $invoiceType, $shoul
          *
          * So for Retail / Wholesale, always use purchase_items.purchase_price as
          * base rate and then apply the selected markup. Use submitted selling_rate
-         * only for Manual price type or as a fallback when markup/base is missing.
+         * as a fallback when markup/base is missing.
          */
         $baseRate = toFloat($row['base_rate'] ?? 0);
         if ($baseRate <= 0) {
@@ -3451,22 +3456,17 @@ function computeItems(PDO $pdo, array $scope, array $items, $invoiceType, $shoul
         }
         $markupValue = toFloat($row['markup_value'] ?? 0);
 
-        if ($priceType === 3 && $submittedRate > 0) {
-            // Manual price type: submitted rate is per-piece selling rate.
-            $sellingRate = $submittedRate;
-        } else {
-            $sellingRate = $baseRate;
+        $sellingRate = $baseRate;
 
-            if ($markupValue > 0) {
-                if ($markupType === 1) {
-                    $sellingRate += ($baseRate * $markupValue / 100);
-                } else {
-                    $sellingRate += $markupValue;
-                }
-            } elseif ($submittedRate > 0) {
-                // Fallback for old rows with no markup saved.
-                $sellingRate = $submittedRate;
+        if ($markupValue > 0) {
+            if ($markupType === 1) {
+                $sellingRate += ($baseRate * $markupValue / 100);
+            } else {
+                $sellingRate += $markupValue;
             }
+        } elseif ($submittedRate > 0) {
+            // Fallback for edited rows with no markup saved.
+            $sellingRate = $submittedRate;
         }
 
         $sellingRate = round2($sellingRate);

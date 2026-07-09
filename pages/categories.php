@@ -177,7 +177,7 @@ if (file_exists($preloaderPath)) {
 
                         <div class="col-md-12 mt-3">
                             <label class="form-label">Description</label>
-                            <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+                            <textarea class="form-control" maxlength="50" id="description" name="description" rows="3"></textarea>
                         </div>
                     </div>
 

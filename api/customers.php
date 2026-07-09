@@ -798,7 +798,11 @@ function saveCustomer(PDO $pdo)
 
     validateZone($pdo, $scope, $zoneId);
 
-    if ($mobile !== '' && !preg_match('/^[0-9]{10}$/', $mobile)) {
+    if ($mobile === '') {
+        jsonResponse(false, 'Please enter mobile number.');
+    }
+
+    if (!preg_match('/^[0-9]{10}$/', $mobile)) {
         jsonResponse(false, 'Please enter valid 10 digit mobile number.');
     }
 
@@ -857,13 +861,6 @@ function saveCustomer(PDO $pdo)
                 'status = :status'
             ];
 
-            if (columnExists($pdo, 'customers', 'opening_outstanding')) {
-                $sets[] = 'opening_outstanding = :opening_outstanding';
-            }
-            if (columnExists($pdo, 'customers', 'opening_balance')) {
-                $sets[] = 'opening_balance = :opening_outstanding';
-            }
-
             $params = [
                 ':zone_id' => $zoneId,
                 ':customer_name' => $customerName,
@@ -874,12 +871,20 @@ function saveCustomer(PDO $pdo)
                 ':city' => $city,
                 ':state' => $state,
                 ':pincode' => $pincode,
-                ':opening_outstanding' => $openingOutstanding,
                 ':status' => $status,
                 ':customer_id' => $customerId,
                 ':business_id' => $scope['business_id'],
                 ':branch_id' => $scope['branch_id']
             ];
+
+            if (columnExists($pdo, 'customers', 'opening_outstanding')) {
+                $sets[] = 'opening_outstanding = :opening_outstanding_value';
+                $params[':opening_outstanding_value'] = $openingOutstanding;
+            }
+            if (columnExists($pdo, 'customers', 'opening_balance')) {
+                $sets[] = 'opening_balance = :opening_balance_value';
+                $params[':opening_balance_value'] = $openingOutstanding;
+            }
 
             $stmt = $pdo->prepare("
                 UPDATE customers
@@ -1084,21 +1089,22 @@ function syncCustomerOpeningColumns(PDO $pdo, array $scope, $customerId, $openin
     $params = [
         ':customer_id' => $customerId,
         ':business_id' => $scope['business_id'],
-        ':branch_id' => $scope['branch_id'],
-        ':opening_balance_value' => $openingBalance,
-        ':opening_due_value' => $openingDue
+        ':branch_id' => $scope['branch_id']
     ];
 
     if (columnExists($pdo, 'customers', 'opening_outstanding')) {
-        $sets[] = 'opening_outstanding = :opening_balance_value';
+        $sets[] = 'opening_outstanding = :sync_opening_outstanding_value';
+        $params[':sync_opening_outstanding_value'] = $openingBalance;
     }
 
     if (columnExists($pdo, 'customers', 'opening_balance')) {
-        $sets[] = 'opening_balance = :opening_balance_value';
+        $sets[] = 'opening_balance = :sync_opening_balance_value';
+        $params[':sync_opening_balance_value'] = $openingBalance;
     }
 
     if (columnExists($pdo, 'customers', 'opening_due')) {
-        $sets[] = 'opening_due = :opening_due_value';
+        $sets[] = 'opening_due = :sync_opening_due_value';
+        $params[':sync_opening_due_value'] = $openingDue;
     }
 
     if (!$sets) {
@@ -1155,18 +1161,19 @@ function recalculateCustomerOutstanding(PDO $pdo, array $scope, $customerId)
 
     $sets = [];
     $params = [
-        ':outstanding' => $outstanding,
         ':customer_id' => $customerId,
         ':business_id' => $scope['business_id'],
         ':branch_id' => $scope['branch_id']
     ];
 
     if (columnExists($pdo, 'customers', 'current_outstanding')) {
-        $sets[] = 'current_outstanding = :outstanding';
+        $sets[] = 'current_outstanding = :current_outstanding_value';
+        $params[':current_outstanding_value'] = $outstanding;
     }
 
     if (columnExists($pdo, 'customers', 'total_outstanding')) {
-        $sets[] = 'total_outstanding = :outstanding';
+        $sets[] = 'total_outstanding = :total_outstanding_value';
+        $params[':total_outstanding_value'] = $outstanding;
     }
 
     if (!$sets) {

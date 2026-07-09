@@ -37,6 +37,7 @@ $(document).ready(function () {
     let holdBillsModal = null;
     let customerModal = null;
     let productEntryModal = null;
+    let profitModal = null;
 
     const DRAFT_KEY = 'universal_erp_sales_draft';
     const HOLD_KEY = 'universal_erp_hold_bills';
@@ -51,6 +52,10 @@ $(document).ready(function () {
 
     if (document.getElementById('productEntryModal')) {
         productEntryModal = new bootstrap.Modal(document.getElementById('productEntryModal'));
+    }
+
+    if (document.getElementById('profitModal')) {
+        profitModal = new bootstrap.Modal(document.getElementById('profitModal'));
     }
 
     loadPaymentModes();
@@ -295,10 +300,10 @@ $(document).ready(function () {
         }
 
         if (canSaveCurrentDocument()) {
-            $('#saveSaleBtn').removeClass('d-none').prop('disabled', false);
+            $('#saveSaleBtn, #savePrintSaleBtn').removeClass('d-none').prop('disabled', false);
             $('#salesPermissionAlert').addClass('d-none');
         } else {
-            $('#saveSaleBtn').addClass('d-none').prop('disabled', true);
+            $('#saveSaleBtn, #savePrintSaleBtn').addClass('d-none').prop('disabled', true);
 
             if (!hasAnyAccess && mode !== 'edit') {
                 $('#salesPermissionAlert').removeClass('d-none');
@@ -425,7 +430,9 @@ $(document).ready(function () {
                     selling_rate: parseFloat(item.selling_rate || 0),
                     discount_type: parseInt(item.discount_type || 1),
                     discount_value: parseFloat(item.discount_value || 0),
-                    gst_percentage: parseFloat(item.gst_percentage || 0)
+                    gst_percentage: parseFloat(item.gst_percentage || 0),
+                    base_rate: parseFloat(item.base_rate || item.purchase_price || 0),
+                    purchase_price: parseFloat(item.purchase_price || item.base_rate || 0)
                 };
             }),
             payments: mode === 'convert' ? [] : payments.map(function (payment) {
@@ -491,7 +498,7 @@ $(document).ready(function () {
         }
 
         $('.sales-convert-btn, #printSaleBtn').addClass('d-none');
-        $('#saveSaleBtn').addClass('d-none').prop('disabled', true);
+        $('#saveSaleBtn, #savePrintSaleBtn').addClass('d-none').prop('disabled', true);
 
         if (mode === 'convert') {
             $('#saveSaleBtn').html(
@@ -653,7 +660,9 @@ $(document).ready(function () {
 
             addPaymentRow();
         });
-        $('#saveSaleBtn').on('click', saveSale);
+        $('#saveSaleBtn').on('click', function () { saveSale({print_after_save: false}); });
+        $('#savePrintSaleBtn').on('click', function () { saveSale({print_after_save: true}); });
+        $('#profitCheckBtn').on('click', showProfitModal);
 
         $(document).on('click', '.sales-convert-btn', function () {
             let config = getSalesPageConfig();
@@ -706,7 +715,8 @@ $(document).ready(function () {
                 return;
             }
 
-            window.open(window.BASE_URL + 'pages/sales-print.php?id=' + saleId + '&print=1', '_blank');
+            let printDocType = parseInt($('#documentType').val() || 0);
+            window.open(salesPrintUrl(saleId, printDocType), '_blank');
         });
 
         $('#addCustomerBtn').on('click', function () {
@@ -782,6 +792,29 @@ $(document).ready(function () {
             let markupType = parseInt(row.find('.batch-markup-type').val() || 1);
             let markupValue = parseFloat(row.find('.batch-markup-value').val() || 0);
             row.find('.batch-markup-label').text((markupType === 2 ? '₹ ' : '% ') + markupValue.toFixed(2));
+        });
+
+        $(document).on('input change', '.batch-selling-rate', function () {
+            let row = $(this).closest('.selected-batch-detail-row');
+            syncSelectedBatchRateMarkup(row, parseFloat($(this).val() || 0));
+        });
+
+        /*
+         * Inline item edit must not re-render on every key press.
+         * Example: typing GST 20 was updating after first digit (2) and rebuilding tbody,
+         * so the second digit could not be entered. Apply only on change/blur/Enter.
+         */
+        $(document).on('change blur', '.inline-sales-item-input', function () {
+            let productId = parseInt($(this).data('product-id') || 0);
+            let field = String($(this).data('field') || '');
+            updateInlineSalesItem(productId, field, $(this).val());
+        });
+
+        $(document).on('keydown', '.inline-sales-item-input', function (event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                $(this).trigger('change').blur();
+            }
         });
 
 $(document).on('click', '.remove-item-btn', function () {
@@ -1197,16 +1230,58 @@ function getBatchKey(batch) {
         }
 
         batch._price_type = parseInt(row.find('.batch-price-type').val() || 1);
+        if ($.inArray(batch._price_type, [1, 2]) === -1) {
+            batch._price_type = 1;
+            row.find('.batch-price-type').val('1');
+        }
+
         let info = getBatchDefaultPriceInfo(batch);
 
         row.find('.batch-markup-type').val(info.markup_type);
         row.find('.batch-markup-value').val(info.markup_value.toFixed(2));
-        row.find('.batch-selling-rate').val(info.selling_rate.toFixed(2));
+        row.find('.batch-selling-rate').val(roundMoney(info.selling_rate).toFixed(2));
 
         if (parseInt($('#invoiceType').val()) === 1) {
-            row.find('.batch-gst-percentage').val(info.gst_percentage.toFixed(2));
+            row.find('.batch-gst-percentage').val(roundMoney(info.gst_percentage).toFixed(2));
         } else {
             row.find('.batch-gst-percentage').val('0.00');
+        }
+    }
+
+    function syncSelectedBatchRateMarkup(row, sellingRate) {
+        let purchaseItemId = parseInt(row.data('purchase-item-id') || 0);
+        let batch = selectedBatches.find(b => parseInt(b.purchase_item_id) === purchaseItemId) || {};
+        let baseRate = roundMoney(parseFloat(batch.purchase_price || 0));
+        sellingRate = roundMoney(sellingRate || 0);
+
+        row.find('.batch-price-type').val(row.find('.batch-price-type').val() === '2' ? '2' : '1');
+
+        if (baseRate > 0 && sellingRate > baseRate) {
+            let markupValue = roundMoney(sellingRate - baseRate);
+            row.find('.batch-markup-type').val('2');
+            row.find('.batch-markup-value').val(markupValue.toFixed(2));
+            row.find('.batch-markup-label').text('₹ ' + markupValue.toFixed(2));
+        } else {
+            row.find('.batch-markup-type').val('1');
+            row.find('.batch-markup-value').val('0.00');
+            row.find('.batch-markup-label').text('% 0.00');
+        }
+    }
+
+    function syncInlineRateMarkup(item, sellingRate) {
+        let baseRate = roundMoney(parseFloat(item.base_rate || item.purchase_price || 0));
+        sellingRate = roundMoney(sellingRate || 0);
+
+        if ($.inArray(parseInt(item.price_type || 1), [1, 2]) === -1) {
+            item.price_type = 1;
+        }
+
+        if (baseRate > 0 && sellingRate > baseRate) {
+            item.markup_type = 2;
+            item.markup_value = roundMoney(sellingRate - baseRate);
+        } else {
+            item.markup_type = 1;
+            item.markup_value = 0;
         }
     }
 
@@ -1278,7 +1353,7 @@ function getBatchKey(batch) {
                         <input type="hidden" class="batch-markup-value" value="${markupValue.toFixed(2)}">
                         <small class="text-muted batch-markup-label">${markupType === 2 ? '₹' : '%'} ${markupValue.toFixed(2)}</small>
                     </td>
-                    <td><input type="number" step="0.01" min="0" class="form-control batch-selling-rate text-end" value="${sellingRate.toFixed(2)}" readonly></td>
+                    <td><input type="number" step="0.01" min="0" class="form-control batch-selling-rate text-end" value="${roundMoney(sellingRate).toFixed(2)}"></td>
                     <td>
                         <select class="form-select batch-discount-type">
                             <option value="1" ${discountType === 1 ? 'selected' : ''}>%</option>
@@ -1374,6 +1449,8 @@ function addOrUpdateSalesItem() {
                 qty: totalQty,
                 entered_total_qty: totalQty,
                 price_type: parseInt(row.find('.batch-price-type').val() || 1),
+                base_rate: roundMoney(batch.purchase_price || 0),
+                purchase_price: roundMoney(batch.purchase_price || 0),
                 markup_type: parseInt(row.find('.batch-markup-type').val() || 1),
                 markup_value: parseFloat(row.find('.batch-markup-value').val() || 0),
                 selling_rate: sellingRate,
@@ -1514,18 +1591,17 @@ function addOrUpdateSalesItem() {
 
         $.each(grouped, function (productId, rows) {
             let first = rows[0];
-
             let totalUnit = 0;
             let totalQty = 0;
-            let lineGross = 0;
             let lineTax = 0;
             let lineTotal = 0;
-
             let qtyPerUnitValues = [];
             let sellingRateValues = [];
+            let gstValues = [];
+
             let batchNames = rows.map(r => {
                 let rowQty = parseFloat(r.qty || 0);
-                return escapeHtml(r.purchase_batch_no || '-') + ' (' + rowQty.toFixed(2) + ')';
+                return escapeHtml(r.purchase_batch_no || '-') + ' (' + roundQty(rowQty).toFixed(2) + ')';
             }).join('<br>');
 
             $.each(rows, function (_, row) {
@@ -1533,10 +1609,11 @@ function addOrUpdateSalesItem() {
                 let rowQty = parseFloat(row.qty || 0);
                 let rowUnit = parseFloat(row.unit_qty || 0);
                 let rowQtyPerUnit = parseFloat(row.qty_per_unit || 0);
+                let rowSellingRate = parseFloat(row.selling_rate || 0);
+                let rowGst = parseFloat(row.gst_percentage || 0);
 
                 totalUnit += rowUnit;
                 totalQty += rowQty;
-                lineGross += line.gross;
                 lineTax += line.tax;
                 lineTotal += line.total;
 
@@ -1544,22 +1621,21 @@ function addOrUpdateSalesItem() {
                     qtyPerUnitValues.push(rowQtyPerUnit);
                 }
 
-                let rowSellingRate = parseFloat(row.selling_rate || 0);
                 if (rowSellingRate > 0 && !sellingRateValues.some(v => Math.abs(v - rowSellingRate) < 0.01)) {
                     sellingRateValues.push(rowSellingRate);
                 }
+
+                if (!gstValues.some(v => Math.abs(v - rowGst) < 0.01)) {
+                    gstValues.push(rowGst);
+                }
             });
 
-            let displayQtyPerUnit = qtyPerUnitValues.length === 1
-                ? qtyPerUnitValues[0].toFixed(2)
-                : 'Mixed';
-
-            let displayRate = sellingRateValues.length === 1
-                ? formatCurrency(sellingRateValues[0])
-                : '<span class="text-muted">Mixed</span>';
+            let displayQtyPerUnit = qtyPerUnitValues.length === 1 ? qtyPerUnitValues[0].toFixed(2) : 'Mixed';
+            let inputRate = sellingRateValues.length === 1 ? sellingRateValues[0] : '';
+            let inputGst = gstValues.length === 1 ? gstValues[0] : '';
 
             html += `
-                <tr>
+                <tr data-product-id="${productId}">
                     <td>
                         <h6 class="mb-0">${escapeHtml(first.product_name || '')}</h6>
                         <small class="text-muted">${escapeHtml(first.product_code || '')}</small>
@@ -1568,17 +1644,22 @@ function addOrUpdateSalesItem() {
                         <div>${batchNames}</div>
                         <small class="text-muted">${rows.length} batch${rows.length > 1 ? 'es' : ''}</small>
                     </td>
-                    <td class="text-end">${totalUnit.toFixed(2)}</td>
+                    <td class="text-end">
+                        <input type="number" step="0.01" min="0" class="form-control form-control-sm text-end sales-inline-input inline-sales-item-input" data-product-id="${productId}" data-field="unit_qty" value="${roundQty(totalUnit).toFixed(2)}">
+                        <div class="sales-inline-muted">editable</div>
+                    </td>
                     <td class="text-end">${displayQtyPerUnit}</td>
-                    <td class="text-end"><strong>${totalQty.toFixed(2)}</strong></td>
-                    <td class="text-end">${displayRate}</td>
-                    <td class="text-end">${formatCurrency(lineTax)}</td>
+                    <td class="text-end"><strong>${roundQty(totalQty).toFixed(2)}</strong></td>
+                    <td class="text-end">
+                        <input type="number" step="0.01" min="0" class="form-control form-control-sm text-end sales-inline-input inline-sales-item-input" data-product-id="${productId}" data-field="selling_rate" value="${inputRate === '' ? '' : roundMoney(inputRate).toFixed(2)}" placeholder="Mixed">
+                    </td>
+                    <td class="text-end">
+                        <input type="number" step="0.01" min="0" class="form-control form-control-sm text-end sales-inline-input inline-sales-item-input" data-product-id="${productId}" data-field="gst_percentage" value="${inputGst === '' ? '' : roundMoney(inputGst).toFixed(2)}" placeholder="Mixed">
+                        <div class="sales-inline-muted">${formatCurrency(lineTax)}</div>
+                    </td>
                     <td class="text-end"><strong>${formatCurrency(lineTotal)}</strong></td>
                     <td>
                         <div class="btn-group btn-group-sm">
-                            <button type="button" class="btn btn-outline-primary edit-item-btn" data-product-id="${productId}" title="Edit">
-                                <i class="mdi mdi-pencil"></i>
-                            </button>
                             <button type="button" class="btn btn-outline-danger remove-item-btn" data-product-id="${productId}" title="Delete">
                                 <i class="mdi mdi-delete"></i>
                             </button>
@@ -1591,27 +1672,84 @@ function addOrUpdateSalesItem() {
         $('#itemsTableBody').html(html);
     }
 
+    function updateInlineSalesItem(productId, field, value) {
+        productId = parseInt(productId || 0);
+        if (productId <= 0 || !field) {
+            return;
+        }
+
+        let rows = salesItems.filter(item => parseInt(item.product_id) === productId);
+        if (!rows.length) {
+            return;
+        }
+
+        let numericValue = parseFloat(value || 0);
+        if (numericValue < 0) {
+            numericValue = 0;
+        }
+
+        if (field === 'selling_rate') {
+            $.each(rows, function (_, item) {
+                item.selling_rate = roundMoney(numericValue);
+                syncInlineRateMarkup(item, item.selling_rate);
+            });
+        } else if (field === 'gst_percentage') {
+            $.each(rows, function (_, item) {
+                item.gst_percentage = roundMoney(numericValue);
+            });
+        } else if (field === 'unit_qty') {
+            let currentTotalUnit = 0;
+            $.each(rows, function (_, item) {
+                currentTotalUnit += parseFloat(item.unit_qty || 0);
+            });
+
+            if (rows.length === 1 || currentTotalUnit <= 0) {
+                let item = rows[0];
+                let qtyPerUnit = parseFloat(item.qty_per_unit || 1);
+                if (qtyPerUnit <= 0) qtyPerUnit = 1;
+                item.unit_qty = roundQty(numericValue);
+                item.qty = roundQty(numericValue * qtyPerUnit);
+                item.entered_total_qty = item.qty;
+            } else {
+                let ratio = numericValue / currentTotalUnit;
+                $.each(rows, function (_, item) {
+                    let qtyPerUnit = parseFloat(item.qty_per_unit || 1);
+                    if (qtyPerUnit <= 0) qtyPerUnit = 1;
+                    item.unit_qty = roundQty(parseFloat(item.unit_qty || 0) * ratio);
+                    item.qty = roundQty(item.unit_qty * qtyPerUnit);
+                    item.entered_total_qty = item.qty;
+                });
+            }
+        }
+
+        renderSalesItems();
+        calculateSummary();
+        saveDraftToStorage();
+    }
+
     function calculateItemLine(item) {
-        let gross = parseFloat(item.qty || 0) * parseFloat(item.selling_rate || 0);
+        let qty = parseFloat(item.qty || 0);
+        let rate = parseFloat(item.selling_rate || 0);
+        let gross = roundMoney(qty * rate);
         let discount = parseInt(item.discount_type) === 1
-            ? gross * parseFloat(item.discount_value || 0) / 100
-            : parseFloat(item.discount_value || 0);
+            ? roundMoney(gross * parseFloat(item.discount_value || 0) / 100)
+            : roundMoney(parseFloat(item.discount_value || 0));
 
         if (discount > gross) {
             discount = gross;
         }
 
-        let taxable = Math.max(gross - discount, 0);
+        let taxable = roundMoney(Math.max(gross - discount, 0));
         let tax = parseInt($('#invoiceType').val()) === 1
-            ? taxable * parseFloat(item.gst_percentage || 0) / 100
+            ? roundMoney(taxable * parseFloat(item.gst_percentage || 0) / 100)
             : 0;
 
         return {
-            gross: gross,
-            discount: discount,
-            taxable: taxable,
-            tax: tax,
-            total: taxable + tax
+            gross: roundMoney(gross),
+            discount: roundMoney(discount),
+            taxable: roundMoney(taxable),
+            tax: roundMoney(tax),
+            total: roundMoney(taxable + tax)
         };
     }
 
@@ -1788,15 +1926,24 @@ function addOrUpdateSalesItem() {
             lineTotal += line.total;
         });
 
+        subTotal = roundMoney(subTotal);
+        itemDiscount = roundMoney(itemDiscount);
+        taxAmount = roundMoney(taxAmount);
+        lineTotal = roundMoney(lineTotal);
+
         let headerDiscountType = parseInt($('#headerDiscountType').val());
         let headerDiscountValue = parseFloat($('#headerDiscountValue').val() || 0);
         let headerDiscount = headerDiscountValue > 0
-            ? (headerDiscountType === 1 ? lineTotal * headerDiscountValue / 100 : headerDiscountValue)
+            ? (headerDiscountType === 1 ? roundMoney(lineTotal * headerDiscountValue / 100) : roundMoney(headerDiscountValue))
             : 0;
 
-        let shippingCharges = parseFloat($('#shippingCharges').val() || 0);
-        let roundOff = parseFloat($('#roundOff').val() || 0);
-        let grandTotal = Math.max(lineTotal - headerDiscount + shippingCharges + roundOff, 0);
+        if (headerDiscount > lineTotal) {
+            headerDiscount = lineTotal;
+        }
+
+        let shippingCharges = roundMoney($('#shippingCharges').val() || 0);
+        let roundOff = roundMoney($('#roundOff').val() || 0);
+        let grandTotal = roundMoney(Math.max(lineTotal - headerDiscount + shippingCharges + roundOff, 0));
 
         syncPaymentsFromDom();
 
@@ -1804,11 +1951,12 @@ function addOrUpdateSalesItem() {
         $.each(salesPayments, function (_, payment) {
             paidAmount += parseFloat(payment.payment_amount || 0);
         });
+        paidAmount = roundMoney(paidAmount);
 
-        let dueAmount = Math.max(grandTotal - paidAmount, 0);
+        let dueAmount = roundMoney(Math.max(grandTotal - paidAmount, 0));
 
         $('#summarySubTotal').text(formatCurrency(subTotal));
-        $('#summaryDiscount').text(formatCurrency(itemDiscount + headerDiscount));
+        $('#summaryDiscount').text(formatCurrency(roundMoney(itemDiscount + headerDiscount)));
         $('#summaryTax').text(formatCurrency(taxAmount));
         $('#summaryGrandTotal').text(formatCurrency(grandTotal));
         $('#summaryPaid').text(formatCurrency(paidAmount));
@@ -1910,12 +2058,11 @@ function addOrUpdateSalesItem() {
                     clearSalesSessionData();
 
                     /*
-                     * After generate, automatically reload edit page.
-                     * Final Invoice can be updated after reload.
+                     * After generate, automatically reload edit/update page.
                      */
-                    setTimeout(function () {
-                        window.location.href = window.BASE_URL + 'pages/sales.php?id=' + savedId + '&mode=edit';
-                    }, 600);
+                    if (savedId > 0) {
+                        redirectToSavedSaleEditPage(savedId, response);
+                    }
                 } else {
                     handleApiError(response);
                     resetButtonLoading('saveSaleBtn', $('#saveSaleBtn').html());
@@ -1929,7 +2076,12 @@ function addOrUpdateSalesItem() {
         });
     }
 
-    function saveSale() {
+    function saveSale(options) {
+        options = options || {};
+        let printAfterSave = options.print_after_save === true;
+        let buttonId = printAfterSave ? 'savePrintSaleBtn' : 'saveSaleBtn';
+        let originalButtonHtml = $('#' + buttonId).html();
+
         if (!canSaveCurrentDocument()) {
             showAppToast('error', 'You do not have permission to save/generate this document type.');
             return;
@@ -1963,6 +2115,7 @@ function addOrUpdateSalesItem() {
         $.each(salesPayments, function (_, payment) {
             paidAmount += parseFloat(payment.payment_amount || 0);
         });
+        paidAmount = roundMoney(paidAmount);
 
         if (paidAmount > grandTotal) {
             showAppToast('warning', 'Paid amount cannot be greater than grand total.');
@@ -1977,7 +2130,11 @@ function addOrUpdateSalesItem() {
 
         let payload = collectPayload();
 
-        setButtonLoading('saveSaleBtn', 'Saving...');
+        if (printAfterSave) {
+            savePrintPopupWindow = openSavePrintPopupWindow();
+        }
+
+        setButtonLoading(buttonId, printAfterSave ? 'Saving & opening print...' : 'Saving...');
 
         $.ajax({
             url: window.BASE_URL + 'api/sales.php',
@@ -1993,50 +2150,184 @@ function addOrUpdateSalesItem() {
                     showAppToast('success', response.message || 'Sale saved successfully.');
 
                     let savedId = response.data && response.data.id ? parseInt(response.data.id) : 0;
-
-                    // Clear only current sales draft/session items after save/generate/final invoice.
-                    // Hold bills are stored in HOLD_KEY and are not removed here.
                     clearSalesSessionData();
 
-                    let payloadMode = payload.mode || getSalesPageConfig().mode || 'new';
-                    let savedDocType = response.data && response.data.sale
-                        ? parseInt(response.data.sale.document_type || 0)
-                        : parseInt(payload.document_type || 0);
+                    if (savedId > 0) {
+                        if (printAfterSave) {
+                            let printDocType = response.data && response.data.sale
+                                ? parseInt(response.data.sale.document_type || payload.document_type || 0)
+                                : parseInt(payload.document_type || $('#documentType').val() || 0);
+                            redirectToSavedSalePrintPage(savedId, printDocType, response);
+                            return;
+                        }
 
-                    /*
-                     * After generate, reload the same document in edit mode.
-                     * This allows:
-                     * - Proforma -> continue Generate Sales Bill
-                     * - Sales Bill -> continue Generate Final Invoice
-                     * - Final Invoice -> Update / Print / Payment only
-                     */
-                    if (savedId > 0 && (payloadMode === 'convert' || parseInt(payload.id || 0) > 0 || savedDocType === 5)) {
-                        $('#documentModeText').text('Saved: ' + (response.data.sales_no || ''));
-                        setTimeout(function () {
-                            window.location.href = window.BASE_URL + 'pages/sales.php?id=' + savedId + '&mode=edit';
-                        }, 600);
+                        redirectToSavedSaleEditPage(savedId, response, 'Opening update page...');
                         return;
                     }
 
-                    clearCurrentScreen();
-                    renderSalesActionButtons({});
-
-                    if (savedId > 0) {
-                        $('#documentModeText').text('Saved: ' + (response.data.sales_no || ''));
-                    }
+                    showAppToast('error', 'Sale saved, but update URL was not received. Please open the sales list.');
                 } else {
                     handleApiError(response);
                 }
 
-                resetButtonLoading('saveSaleBtn', $('#saveSaleBtn').html());
+                resetButtonLoading(buttonId, originalButtonHtml);
             },
             error: function (xhr) {
                 console.log(xhr.responseText);
                 showAppToast('error', 'Server error. Please try again.');
-                resetButtonLoading('saveSaleBtn', $('#saveSaleBtn').html());
+                resetButtonLoading(buttonId, originalButtonHtml);
             }
         });
     }
+
+
+    function salesPrintUrl(savedId, documentType) {
+        savedId = parseInt(savedId || 0);
+        documentType = parseInt(documentType || $('#documentType').val() || 0);
+
+        // Direct FPDF output from API. No UI preview page.
+        let url = window.BASE_URL + 'api/sales-print.php?id=' + encodeURIComponent(savedId);
+        if (documentType > 0) {
+            url += '&document_type=' + encodeURIComponent(documentType);
+        }
+
+        return url;
+    }
+
+    function openSavePrintPopupWindow() {
+        let printWindow = null;
+
+        try {
+            printWindow = window.open('', '_blank');
+
+            if (printWindow && printWindow.document) {
+                printWindow.document.open();
+                printWindow.document.write(
+                    '<!doctype html><html><head><title>Preparing Print</title>' +
+                    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+                    '<style>body{font-family:Arial,sans-serif;background:#f5f7fb;margin:0;display:flex;align-items:center;justify-content:center;height:100vh;color:#111827}.box{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:24px 28px;box-shadow:0 10px 30px rgba(15,23,42,.12);text-align:center}.spinner{width:34px;height:34px;border:4px solid #e5e7eb;border-top-color:#2563eb;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 12px}@keyframes spin{to{transform:rotate(360deg)}}</style>' +
+                    '</head><body><div class="box"><div class="spinner"></div><strong>Preparing print...</strong><br><small>Please wait</small></div></body></html>'
+                );
+                printWindow.document.close();
+            }
+        } catch (e) {
+            printWindow = null;
+        }
+
+        return printWindow;
+    }
+
+    function salesEditUrl(savedId, response) {
+        let data = response && response.data ? response.data : {};
+        return data.redirect_url || data.edit_url || (window.BASE_URL + 'pages/sales.php?id=' + encodeURIComponent(savedId) + '&mode=edit');
+    }
+
+    function directPrintPdfInPopup(pdfUrl, editUrl) {
+        let printWindow = savePrintPopupWindow && !savePrintPopupWindow.closed ? savePrintPopupWindow : null;
+
+        if (!printWindow) {
+            printWindow = openSavePrintPopupWindow();
+        }
+
+        if (!printWindow) {
+            // Popup blocked fallback: open direct FPDF in the current tab.
+            window.location.href = pdfUrl;
+            return;
+        }
+
+        let printScript = `
+            (function () {
+                var pdfUrl = ${JSON.stringify(pdfUrl)};
+                var printed = false;
+
+                function doPrint() {
+                    if (printed) return;
+                    printed = true;
+                    try {
+                        var frame = document.getElementById('salesPdfFrame');
+                        if (frame && frame.contentWindow) {
+                            frame.contentWindow.focus();
+                            frame.contentWindow.print();
+                            return;
+                        }
+                    } catch (e) {}
+
+                    try {
+                        window.focus();
+                        window.print();
+                    } catch (e) {
+                        window.location.href = pdfUrl;
+                    }
+                }
+
+                window.__salesPdfDoPrint = doPrint;
+                setTimeout(doPrint, 1800);
+            })();
+        `;
+
+        try {
+            printWindow.document.open();
+            printWindow.document.write(
+                '<!doctype html><html><head><title>Sales Print</title>' +
+                '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+                '<style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#111827}.print-hint{position:fixed;top:10px;right:10px;z-index:9;background:#fff;border-radius:8px;padding:8px 12px;font:12px Arial,sans-serif;box-shadow:0 6px 18px rgba(0,0,0,.22)}iframe{border:0;width:100%;height:100vh;background:#fff}</style>' +
+                '</head><body>' +
+                '<div class="print-hint">Opening print dialog...</div>' +
+                '<iframe id="salesPdfFrame" src="' + escapeHtml(pdfUrl) + '" onload="setTimeout(function(){ if(window.__salesPdfDoPrint){ window.__salesPdfDoPrint(); } }, 700)"></iframe>' +
+                '<script>' + printScript + '<\/script>' +
+                '</body></html>'
+            );
+            printWindow.document.close();
+            printWindow.focus();
+        } catch (e) {
+            printWindow.location.href = pdfUrl;
+            setTimeout(function () {
+                try {
+                    printWindow.focus();
+                    printWindow.print();
+                } catch (ignore) {}
+            }, 2000);
+        }
+
+        if (editUrl) {
+            setTimeout(function () {
+                window.location.href = editUrl;
+            }, 900);
+        }
+    }
+
+    function redirectToSavedSalePrintPage(savedId, documentType, response) {
+        savedId = parseInt(savedId || 0);
+        if (savedId <= 0) {
+            return;
+        }
+
+        let pdfUrl = salesPrintUrl(savedId, documentType);
+        let editUrl = salesEditUrl(savedId, response);
+
+        setButtonLoading('savePrintSaleBtn', 'Opening direct print...');
+        directPrintPdfInPopup(pdfUrl, editUrl);
+    }
+
+    function redirectToSavedSaleEditPage(savedId, response, loadingText) {
+        savedId = parseInt(savedId || 0);
+
+        if (savedId <= 0) {
+            return;
+        }
+
+        let data = response && response.data ? response.data : {};
+        let redirectUrl = data.redirect_url || data.edit_url || (window.BASE_URL + 'pages/sales.php?id=' + savedId + '&mode=edit');
+
+        $('#saleId').val(savedId);
+        $('#documentModeText').text('Saved: ' + (data.sales_no || ''));
+        setButtonLoading('saveSaleBtn', loadingText || 'Opening update page...');
+
+        setTimeout(function () {
+            window.location.href = redirectUrl;
+        }, 600);
+    }
+
 
     function normalizeSalesItemForPayload(item) {
         item = Object.assign({}, item || {});
@@ -2058,11 +2349,17 @@ function addOrUpdateSalesItem() {
             qty = unitQty * qtyPerUnit;
         }
 
-        item.unit_qty = unitQty;
-        item.qty_per_unit = qtyPerUnit;
+        item.unit_qty = roundQty(unitQty);
+        item.qty_per_unit = roundQty(qtyPerUnit);
         item.loose_qty = looseQty;
-        item.qty = qty;
-        item.entered_total_qty = qty;
+        item.qty = roundQty(qty);
+        item.entered_total_qty = item.qty;
+        item.selling_rate = roundMoney(item.selling_rate || 0);
+        item.discount_value = roundMoney(item.discount_value || 0);
+        item.gst_percentage = roundMoney(item.gst_percentage || 0);
+        item.base_rate = roundMoney(item.base_rate || item.purchase_price || 0);
+        item.purchase_price = roundMoney(item.purchase_price || item.base_rate || 0);
+        item.price_type = $.inArray(parseInt(item.price_type || 1), [1, 2]) === -1 ? 1 : parseInt(item.price_type || 1);
 
         return item;
     }
@@ -2083,9 +2380,9 @@ function addOrUpdateSalesItem() {
             due_date: $('#dueDate').val(),
             notes: $('#notes').val(),
             discount_type: parseInt($('#headerDiscountType').val()),
-            discount_value: parseFloat($('#headerDiscountValue').val() || 0),
-            round_off: parseFloat($('#roundOff').val() || 0),
-            shipping_charges: parseFloat($('#shippingCharges').val() || 0),
+            discount_value: roundMoney($('#headerDiscountValue').val() || 0),
+            round_off: roundMoney($('#roundOff').val() || 0),
+            shipping_charges: roundMoney($('#shippingCharges').val() || 0),
             delivery_address: $('#deliveryAddress').val() || '',
             customer_display: $('#customerSearch').val(),
             customer_info: $('#customerInfo').text(),
@@ -2512,12 +2809,96 @@ function addOrUpdateSalesItem() {
         });
     }
 
+    function showProfitModal() {
+        renderProfitDetails();
+        if (profitModal) {
+            profitModal.show();
+        } else {
+            showAppToast('info', 'Profit modal not found.');
+        }
+    }
+
+    function renderProfitDetails() {
+        if (!salesItems || salesItems.length === 0) {
+            $('#profitDetailsBody').html('<tr><td colspan="6" class="text-center text-muted">No items added.</td></tr>');
+            $('#profitSalesTotal').text(formatCurrency(0));
+            $('#profitCostTotal').text(formatCurrency(0));
+            $('#profitAmountTotal').text(formatCurrency(0));
+            $('#profitPercentTotal').text('0.00%');
+            return;
+        }
+
+        let html = '';
+        let salesBeforeGst = 0;
+        let purchaseCost = 0;
+        let profitTotal = 0;
+
+        $.each(salesItems, function (index, item) {
+            let qty = parseFloat(item.qty || 0);
+            let line = calculateItemLine(item);
+            let costRate = parseFloat(item.purchase_price || item.base_rate || 0);
+            let itemCost = roundMoney(qty * costRate);
+            let itemProfit = roundMoney(line.taxable - itemCost);
+
+            salesBeforeGst += line.taxable;
+            purchaseCost += itemCost;
+            profitTotal += itemProfit;
+
+            html += `
+                <tr>
+                    <td>${index + 1}</td>
+                    <td>
+                        <strong>${escapeHtml(item.product_name || '')}</strong><br>
+                        <small class="text-muted">${escapeHtml(item.purchase_batch_no || '-')}</small>
+                    </td>
+                    <td class="text-end">${roundQty(qty).toFixed(2)}</td>
+                    <td class="text-end">${formatCurrency(item.selling_rate || 0)}</td>
+                    <td class="text-end">${formatCurrency(costRate)}</td>
+                    <td class="text-end"><strong class="${itemProfit >= 0 ? 'text-success' : 'text-danger'}">${formatCurrency(itemProfit)}</strong></td>
+                </tr>
+            `;
+        });
+
+        salesBeforeGst = roundMoney(salesBeforeGst);
+        purchaseCost = roundMoney(purchaseCost);
+
+        let headerDiscountType = parseInt($('#headerDiscountType').val() || 1);
+        let headerDiscountValue = parseFloat($('#headerDiscountValue').val() || 0);
+        let headerDiscount = headerDiscountValue > 0
+            ? (headerDiscountType === 1 ? roundMoney(salesBeforeGst * headerDiscountValue / 100) : roundMoney(headerDiscountValue))
+            : 0;
+        if (headerDiscount > salesBeforeGst) {
+            headerDiscount = salesBeforeGst;
+        }
+
+        let shippingCharges = roundMoney($('#shippingCharges').val() || 0);
+        let roundOff = roundMoney($('#roundOff').val() || 0);
+        let netSalesBeforeGst = roundMoney(salesBeforeGst - headerDiscount + shippingCharges + roundOff);
+        profitTotal = roundMoney(netSalesBeforeGst - purchaseCost);
+        let profitPercent = purchaseCost > 0 ? roundMoney((profitTotal / purchaseCost) * 100) : 0;
+
+        $('#profitDetailsBody').html(html);
+        $('#profitSalesTotal').text(formatCurrency(netSalesBeforeGst));
+        $('#profitCostTotal').text(formatCurrency(purchaseCost));
+        $('#profitAmountTotal').text(formatCurrency(profitTotal));
+        $('#profitPercentTotal').text(profitPercent.toFixed(2) + '%');
+        $('#profitAmountTotal').toggleClass('text-success', profitTotal >= 0).toggleClass('text-danger', profitTotal < 0);
+    }
+
+    function roundMoney(value) {
+        return Math.round((parseFloat(value || 0) + Number.EPSILON) * 100) / 100;
+    }
+
+    function roundQty(value) {
+        return Math.round((parseFloat(value || 0) + Number.EPSILON) * 10000) / 10000;
+    }
+
     function currentDate() {
         return new Date().toISOString().slice(0, 10);
     }
 
     function formatCurrency(value) {
-        let numberValue = parseFloat(value || 0);
+        let numberValue = roundMoney(value || 0);
         return '₹' + numberValue.toLocaleString('en-IN', {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2

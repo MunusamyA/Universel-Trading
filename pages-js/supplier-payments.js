@@ -7,6 +7,9 @@ $(document).ready(function () {
     let paymentSplits = [];
     let supplierSummary = {};
     let isEditMode = false;
+    let editOriginalPaymentAmount = 0;
+    let editOriginalPaymentType = 0;
+    let editOriginalPurchaseId = 0;
 
     let pageContext = {
         can_view: false,
@@ -378,7 +381,7 @@ $(document).ready(function () {
     function applyPaymentTypeRules(autoFillAmount) {
         let supplierId = parseInt($('#supplier_id').val() || 0);
         let type = parseInt($('#payment_type').val() || 1);
-        let amount = 0;
+        let maxAmount = 0;
         let help = '';
         let limitHelp = '';
         let allowSubmit = true;
@@ -386,44 +389,58 @@ $(document).ready(function () {
         if (type === 2) {
             $('#purchaseBillBox').show();
             let bill = getSelectedPurchase();
-            amount = bill ? round2(parseFloat(bill.due_amount || 0)) : 0;
+            maxAmount = bill ? round2(parseFloat(bill.due_amount || 0)) : 0;
+
+            if (isEditMode && editOriginalPaymentType === 2 && editOriginalPurchaseId > 0 && parseInt($('#purchase_id').val() || 0) === editOriginalPurchaseId) {
+                maxAmount = round2(maxAmount + editOriginalPaymentAmount);
+            }
+
             help = 'Individual: selected purchase bill only.';
-            limitHelp = bill ? `Selected bill due: ₹${numberFormat(amount)}` : 'Select a pending purchase bill.';
-            allowSubmit = !!bill && amount > 0;
+            limitHelp = bill ? `Selected bill payable up to: ₹${numberFormat(maxAmount)}. You can enter partial amount.` : 'Select a pending purchase bill.';
+            allowSubmit = !!bill && maxAmount > 0;
         } else {
             $('#purchaseBillBox').hide();
             $('#purchase_id').val('');
 
             if (type === 3) {
-                amount = round2(parseFloat(supplierSummary.opening_due || 0));
+                maxAmount = round2(parseFloat(supplierSummary.opening_due || 0));
+                if (isEditMode && editOriginalPaymentType === 3) {
+                    maxAmount = round2(maxAmount + editOriginalPaymentAmount);
+                }
                 help = 'Opening Outstanding: only suppliers.opening_outstanding due will reduce. Purchase bills will not reduce.';
-                limitHelp = `Opening outstanding due: ₹${numberFormat(amount)}`;
-                allowSubmit = amount > 0;
+                limitHelp = `Opening outstanding payable up to: ₹${numberFormat(maxAmount)}. You can enter partial amount.`;
+                allowSubmit = maxAmount > 0;
             } else {
-                amount = round2(parseFloat(supplierSummary.total_payable || 0));
+                maxAmount = round2(parseFloat(supplierSummary.total_payable || 0));
+                if (isEditMode && editOriginalPaymentType === 1) {
+                    maxAmount = round2(maxAmount + editOriginalPaymentAmount);
+                }
                 help = 'Overall: FIFO purchase bill due first, opening outstanding last.';
-                limitHelp = `Total payable: ₹${numberFormat(amount)} | Purchase due: ₹${numberFormat(supplierSummary.purchase_due || 0)} | Opening due: ₹${numberFormat(supplierSummary.opening_due || 0)}`;
-                allowSubmit = amount > 0;
+                limitHelp = `Total payable up to: ₹${numberFormat(maxAmount)} | Purchase due: ₹${numberFormat(supplierSummary.purchase_due || 0)} | Opening due: ₹${numberFormat(supplierSummary.opening_due || 0)}. You can enter partial amount.`;
+                allowSubmit = maxAmount > 0;
             }
         }
 
         $('#paymentTypeHelp').text(help || 'Select payment type.');
         $('#amountLimitHelp').text(supplierId > 0 ? limitHelp : 'Select supplier first.');
-
-        // Protected amount: amount is auto-filled and readonly.
-        // This prevents paying excess/wrong amount for overall/opening/individual.
-        $('#total_amount').prop('readonly', true);
+        $('#total_amount')
+            .prop('readonly', false)
+            .attr('max', maxAmount > 0 ? maxAmount.toFixed(2) : '')
+            .attr('placeholder', maxAmount > 0 ? 'Maximum ₹' + numberFormat(maxAmount) : '0.00');
 
         if (autoFillAmount || !isEditMode) {
-            $('#total_amount').val(amount.toFixed(2));
+            $('#total_amount').val(maxAmount.toFixed(2));
             paymentSplits = [];
-            if (amount > 0) {
+            if (maxAmount > 0) {
                 paymentSplits.push({
                     payment_mode_id: paymentModes.length ? parseInt(paymentModes[0].id) : 0,
-                    amount: amount,
+                    amount: maxAmount,
                     reference_no: ''
                 });
             }
+        } else {
+            protectAmountLimit(false);
+            syncSplitsWithAmount();
         }
 
         renderSplits();
@@ -432,33 +449,56 @@ $(document).ready(function () {
         $('#savePaymentBtn').prop('disabled', supplierId <= 0 || !allowSubmit || (!pageContext.can_add && !pageContext.can_edit));
     }
 
-    function protectAmountLimit() {
+    function protectAmountLimit(showMessage) {
+        if (showMessage === undefined) {
+            showMessage = true;
+        }
+
         let max = getAllowedAmount();
         let value = round2(parseFloat($('#total_amount').val() || 0));
 
         if (value > max) {
             $('#total_amount').val(max.toFixed(2));
-            showToastSafe('error', 'Amount cannot exceed payable balance.');
+            if (showMessage) {
+                showToastSafe('error', 'Amount cannot exceed payable balance.');
+            }
+            value = max;
         }
 
         if (value < 0) {
             $('#total_amount').val('0.00');
+            value = 0;
         }
+
+        return value;
     }
 
     function getAllowedAmount() {
         let type = parseInt($('#payment_type').val() || 1);
+        let maxAmount = 0;
 
         if (type === 2) {
             let bill = getSelectedPurchase();
-            return bill ? round2(parseFloat(bill.due_amount || 0)) : 0;
+            maxAmount = bill ? round2(parseFloat(bill.due_amount || 0)) : 0;
+            if (isEditMode && editOriginalPaymentType === 2 && editOriginalPurchaseId > 0 && parseInt($('#purchase_id').val() || 0) === editOriginalPurchaseId) {
+                maxAmount = round2(maxAmount + editOriginalPaymentAmount);
+            }
+            return maxAmount;
         }
 
         if (type === 3) {
-            return round2(parseFloat(supplierSummary.opening_due || 0));
+            maxAmount = round2(parseFloat(supplierSummary.opening_due || 0));
+            if (isEditMode && editOriginalPaymentType === 3) {
+                maxAmount = round2(maxAmount + editOriginalPaymentAmount);
+            }
+            return maxAmount;
         }
 
-        return round2(parseFloat(supplierSummary.total_payable || 0));
+        maxAmount = round2(parseFloat(supplierSummary.total_payable || 0));
+        if (isEditMode && editOriginalPaymentType === 1) {
+            maxAmount = round2(maxAmount + editOriginalPaymentAmount);
+        }
+        return maxAmount;
     }
 
     function loadPayments() {
@@ -561,6 +601,9 @@ $(document).ready(function () {
                 if (response.status === true) {
                     let payment = response.data.payment || {};
                     isEditMode = true;
+                    editOriginalPaymentAmount = round2(parseFloat(payment.total_amount || 0));
+                    editOriginalPaymentType = parseInt(payment.payment_type || 0);
+                    editOriginalPurchaseId = 0;
 
                     $('#payment_id').val(payment.id || 0);
                     $('#supplier_id').val(payment.supplier_id);
@@ -583,7 +626,17 @@ $(document).ready(function () {
                             return parseInt(a.allocation_type || 0) === 1 && parseInt(a.purchase_id || 0) > 0;
                         });
                         if (alloc) {
-                            $('#purchase_id').val(alloc.purchase_id);
+                            editOriginalPurchaseId = parseInt(alloc.purchase_id || 0);
+
+                            if ($('#purchase_id option[value="' + editOriginalPurchaseId + '"]').length === 0) {
+                                $('#purchase_id').append(
+                                    '<option value="' + editOriginalPurchaseId + '">' +
+                                    escapeHtml((alloc.bill_no || 'Previous Bill') + ' | Previous payment allocation | Due ₹' + numberFormat(editOriginalPaymentAmount)) +
+                                    '</option>'
+                                );
+                            }
+
+                            $('#purchase_id').val(editOriginalPurchaseId);
                         }
                         applyPaymentTypeRules(false);
                         renderSplits();
@@ -664,7 +717,7 @@ $(document).ready(function () {
     function addSplit() {
         let amount = round2(parseFloat($('#total_amount').val() || 0));
         if (amount <= 0) {
-            return warn('No payable amount available.', '#total_amount');
+            return warn('Please enter payment amount first.', '#total_amount');
         }
 
         let balance = round2(amount - getSplitTotal());
@@ -777,7 +830,7 @@ $(document).ready(function () {
         }
 
         if (amount <= 0) {
-            return warn('No payable amount available for this payment type.', '#total_amount');
+            return warn('Please enter payment amount greater than zero.', '#total_amount');
         }
 
         if (amount > allowedAmount + 0.01) {
@@ -815,6 +868,9 @@ $(document).ready(function () {
 
     function resetForm(clearSupplier) {
         isEditMode = false;
+        editOriginalPaymentAmount = 0;
+        editOriginalPaymentType = 0;
+        editOriginalPurchaseId = 0;
         $('#payment_id').val('0');
         $('#payment_date').val(new Date().toISOString().slice(0, 10));
         $('#payment_type').val('1');

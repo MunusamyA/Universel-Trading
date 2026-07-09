@@ -38,6 +38,16 @@ $(document).ready(function () {
         timer = setTimeout(loadRecords, 400);
     });
 
+    $('#hsn_code').on('input', function () {
+        this.value = this.value.replace(/[^0-9]/g, '');
+    });
+
+    $('#hsn_description').on('input', function () {
+        if (this.value.length > 100) {
+            this.value = this.value.substring(0, 100);
+        }
+    });
+
     $('#recordForm').on('submit', function (e) {
         e.preventDefault();
 
@@ -53,9 +63,24 @@ $(document).ready(function () {
             return;
         }
 
-        if ($.trim($('#hsn_code').val()) === '') {
+        let hsnCode = $.trim($('#hsn_code').val());
+        let description = $.trim($('#hsn_description').val());
+
+        if (hsnCode === '') {
             showToastSafe('warning', 'Please enter HSN code.');
             $('#hsn_code').focus();
+            return;
+        }
+
+        if (!/^[0-9]+$/.test(hsnCode)) {
+            showToastSafe('warning', 'HSN code must contain numbers only.');
+            $('#hsn_code').focus();
+            return;
+        }
+
+        if (description.length > 100) {
+            showToastSafe('warning', 'Description can be maximum 100 characters only.');
+            $('#hsn_description').focus();
             return;
         }
 
@@ -243,8 +268,8 @@ $(document).ready(function () {
 
             html += '<tr>';
             html += '<td>' + (i + 1) + '</td>';
-            html += '<td>' + escapeHtml(row.hsn_code || '') + '</td>';
-            html += '<td>' + escapeHtml(row.hsn_description || '') + '</td>';
+            html += '<td class="hsn-code-cell">' + escapeHtml(row.hsn_code || '') + '</td>';
+            html += '<td class="hsn-description-cell">' + escapeHtml(row.hsn_description || '') + '</td>';
             html += '<td>' + percent(row.cgst_percentage) + '</td>';
             html += '<td>' + percent(row.sgst_percentage) + '</td>';
             html += '<td>' + percent(row.igst_percentage) + '</td>';
@@ -269,6 +294,7 @@ $(document).ready(function () {
         $('#sgst_percentage').val('0.00');
         $('#igst_percentage').val('0.00');
         $('#status1').val('1');
+        $('#hsn_description').attr('maxlength', '100');
         $('#saveBtn').prop('disabled', false).html('Save');
     }
 

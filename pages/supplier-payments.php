@@ -144,8 +144,8 @@ $page_title = 'Supplier Payments | Universal ERP';
 
                                 <div class="col-md-3 mb-3">
                                     <label class="form-label">Amount *</label>
-                                    <input type="number" step="0.01" min="0" class="form-control text-end" id="total_amount" name="total_amount" value="0.00" readonly>
-                                    <small class="text-muted" id="amountLimitHelp">Select supplier and payment type.</small>
+                                    <input type="number" step="0.01" min="0.01" class="form-control text-end" id="total_amount" name="total_amount" value="0.00" placeholder="Enter payment amount">
+                                    <small class="text-muted" id="amountLimitHelp">Select supplier and payment type. Amount can be edited for partial payment.</small>
                                 </div>
 
                                 <div class="col-md-9 mb-3">

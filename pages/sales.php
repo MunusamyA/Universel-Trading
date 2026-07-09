@@ -182,6 +182,25 @@ $salesPageConfig = [
         overflow-y: auto;
     }
 
+    .sales-inline-input {
+        min-width: 82px;
+        max-width: 110px;
+        display: inline-block;
+        padding: 3px 6px;
+        font-size: 11px;
+    }
+    .sales-inline-muted {
+        font-size: 10px;
+        color: #6c757d;
+    }
+    .profit-summary-card {
+        border: 1px solid #e9edf3;
+        border-radius: 8px;
+        padding: 10px;
+        background: #fbfcff;
+        height: 100%;
+    }
+
 </style>
 
 </head>
@@ -464,8 +483,14 @@ $salesPageConfig = [
 
                                 <div class="card-footer">
                                     <div class="d-flex flex-wrap justify-content-end gap-2" id="salesActionButtons">
+                                        <button type="button" class="btn btn-outline-success d-none" id="savePrintSaleBtn">
+                                            <i class="mdi mdi-printer-check me-1"></i> Save & Print
+                                        </button>
                                         <button type="button" class="btn btn-success d-none" id="saveSaleBtn">
                                             <i class="mdi mdi-content-save me-1"></i> Save
+                                        </button>
+                                        <button type="button" class="btn btn-outline-dark" id="profitCheckBtn">
+                                            <i class="mdi mdi-chart-line me-1"></i> Profit
                                         </button>
                                         <button type="button" class="btn btn-outline-primary d-none sales-convert-btn" data-target-type="2" id="convertProformaBtn">
                                             <i class="mdi mdi-file-document-plus-outline me-1"></i> Generate Proforma Bill
@@ -542,6 +567,48 @@ $salesPageConfig = [
                 <button type="button" class="btn btn-primary" id="addItemBtn">
                     <i class="mdi mdi-plus me-1"></i> Add Item
                 </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="profitModal" tabindex="-1" aria-labelledby="profitModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title mb-0" id="profitModalTitle">Current Profit Details</h5>
+                    <small class="text-muted">Calculated from current sales item rate, purchase cost, discount, GST and round-off.</small>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-2 mb-3" id="profitSummaryCards">
+                    <div class="col-md-3"><div class="profit-summary-card"><small class="text-muted">Net Sales before GST</small><h5 class="mb-0" id="profitSalesTotal">₹0.00</h5></div></div>
+                    <div class="col-md-3"><div class="profit-summary-card"><small class="text-muted">Purchase Cost</small><h5 class="mb-0" id="profitCostTotal">₹0.00</h5></div></div>
+                    <div class="col-md-3"><div class="profit-summary-card"><small class="text-muted">Profit</small><h5 class="mb-0" id="profitAmountTotal">₹0.00</h5></div></div>
+                    <div class="col-md-3"><div class="profit-summary-card"><small class="text-muted">Profit %</small><h5 class="mb-0" id="profitPercentTotal">0.00%</h5></div></div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-centered mb-0">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Product</th>
+                                <th class="text-end">Qty</th>
+                                <th class="text-end">Sale Rate</th>
+                                <th class="text-end">Cost Rate</th>
+                                <th class="text-end">Profit</th>
+                            </tr>
+                        </thead>
+                        <tbody id="profitDetailsBody">
+                            <tr><td colspan="6" class="text-center text-muted">No items added.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
             </div>
         </div>
     </div>

@@ -91,7 +91,9 @@ function clCurrentRoleIds()
                 if ($dbRoleId > 0) {
                     $roleIds[] = $dbRoleId;
                 }
-            } catch (Throwable $e) {}
+            } catch (Throwable $e) {
+                // ignore
+            }
         }
     }
 
@@ -122,7 +124,9 @@ function clCurrentRoleIds()
                     $roleIds[] = $parentRoleId;
                 }
             }
-        } catch (Throwable $e) {}
+        } catch (Throwable $e) {
+            // ignore
+        }
     }
 
     return array_values(array_unique(array_filter(array_map('intval', $roleIds))));
@@ -234,7 +238,7 @@ function getCustomerLedgerPageContext(PDO $pdo)
             'can_customers' => clCan(clCustomerKeys(), 1) || clCan(clCustomerKeys(), 2),
             'customers_url' => BASE_URL . 'pages/customers.php',
             'page_title' => 'Customer Ledger',
-            'page_note' => 'Debit / Credit / Balance statement'
+            'page_note' => 'Customer debit / credit / balance statement'
         ]
     ]);
 }
@@ -307,7 +311,6 @@ function listCustomerLedger(PDO $pdo)
 
     $rows = [];
     $runningBalance = 0.0;
-
     $openingBalance = clOpeningBalance($customer);
 
     if ($fromDate) {

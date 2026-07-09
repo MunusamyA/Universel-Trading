@@ -5,11 +5,49 @@ $(document).ready(function () {
     let pageContext = {
         can_receive_payment: false
     };
+    let currentCustomer = null;
+    let currentSales = [];
+
+    preparePrintFormat('a4');
 
     if (customerId <= 0) {
         $('#customerSalesTableBody').html('<tr><td colspan="11" class="text-center text-danger">Invalid customer.</td></tr>');
         showToastSafe('error', 'Invalid customer.');
         return;
+    }
+
+    $(document).on('click', '.print-customer-format-btn', function () {
+        let format = String($(this).data('format') || 'a4').toLowerCase();
+        printCustomerReport(format);
+    });
+
+    function printCustomerReport(format) {
+        if (!currentCustomer) {
+            showToastSafe('warning', 'Customer details still loading.');
+            return;
+        }
+
+        format = format === 'a3' ? 'a3' : 'a4';
+        preparePrintFormat(format);
+        updatePrintGeneratedAt();
+        renderPrintReport(currentCustomer, currentSales);
+
+        setTimeout(function () {
+            window.print();
+        }, 80);
+    }
+
+    function preparePrintFormat(format) {
+        let isA3 = format === 'a3';
+        let pageCss = isA3
+            ? '@page { size: A3 landscape; margin: 10mm; }'
+            : '@page { size: A4 landscape; margin: 8mm; }';
+
+        $('#customerPrintPageSize').text(pageCss);
+        $('body')
+            .removeClass('customer-print-a3 customer-print-a4')
+            .addClass(isA3 ? 'customer-print-a3' : 'customer-print-a4');
+        $('#printFormatLabel').text(isA3 ? 'A3 Landscape' : 'A4 Landscape');
     }
 
     loadCustomerView();
@@ -29,8 +67,11 @@ $(document).ready(function () {
                 if (response.status === true) {
                     let data = response.data || {};
                     pageContext = data.context || pageContext;
-                    renderCustomer(data.customer || {});
-                    renderSales(data.sales || []);
+                    currentCustomer = data.customer || {};
+                    currentSales = data.sales || [];
+                    renderCustomer(currentCustomer);
+                    renderSales(currentSales);
+                    renderPrintReport(currentCustomer, currentSales);
                 } else {
                     handleError(response);
                     $('#customerSalesTableBody').html('<tr><td colspan="11" class="text-center text-danger">' + escapeHtml(response.message || 'Unable to load customer view.') + '</td></tr>');
@@ -113,6 +154,59 @@ $(document).ready(function () {
         $('#customerSalesTableBody').html(html);
     }
 
+    function renderPrintReport(customer, rows) {
+        customer = customer || {};
+        rows = rows || [];
+
+        let name = customer.customer_name || '-';
+        let address = formatAddress(customer) || '-';
+        let zone = customer.zone_name || '-';
+        let zoneCode = customer.zone_code ? ' (' + customer.zone_code + ')' : '';
+        let status = parseInt(customer.status || 0) === 1 ? 'Active' : 'Inactive';
+
+        updatePrintGeneratedAt();
+        $('#printCustomerId').text(customer.id || '-');
+        $('#printCustomerName').text(name);
+        $('#printCustomerMobile').text(customer.mobile || '-');
+        $('#printCustomerEmail').text(customer.email || '-');
+        $('#printCustomerGst').text(customer.gst_number || '-');
+        $('#printCustomerZone').text(zone + zoneCode);
+        $('#printCustomerStatus').text(status);
+        $('#printCustomerAddress').text(address);
+
+        $('#printOpeningBalance, #printKpiOpeningBalance').text(formatCurrency(customer.opening_balance || 0));
+        $('#printOverallSales, #printKpiOverallSales').text(formatCurrency(customer.overall_sales || 0));
+        $('#printPaidAmount, #printKpiPaidAmount').text(formatCurrency(customer.paid_amount || 0));
+        $('#printDueAmount, #printKpiDueAmount').text(formatCurrency(customer.due_amount || 0));
+        $('#printSalesPaid').text(formatCurrency(customer.sales_paid_amount || 0));
+        $('#printSalesDue').text(formatCurrency(customer.sales_due_amount || 0));
+        $('#printKpiSalesCount').text(numberFormat(rows.length));
+
+        if (!rows.length) {
+            $('#printSalesTableBody').html('<tr><td colspan="11" class="print-text-center">No sales records found.</td></tr>');
+            return;
+        }
+
+        let html = '';
+        $.each(rows, function (index, row) {
+            html += '<tr>';
+            html += '<td class="print-text-center">' + (index + 1) + '</td>';
+            html += '<td><strong>' + escapeHtml(row.sales_no || '-') + '</strong></td>';
+            html += '<td>' + escapeHtml(row.document_label || documentLabel(row.document_type)) + '</td>';
+            html += '<td>' + formatDate(row.sales_date) + '</td>';
+            html += '<td class="print-text-end">' + formatCurrency(row.sub_total || 0) + '</td>';
+            html += '<td class="print-text-end">' + formatCurrency(row.tax_amount || 0) + '</td>';
+            html += '<td class="print-text-end"><strong>' + formatCurrency(row.grand_total || 0) + '</strong></td>';
+            html += '<td class="print-text-end">' + formatCurrency(row.paid_amount || 0) + '</td>';
+            html += '<td class="print-text-end"><strong>' + formatCurrency(row.due_amount || 0) + '</strong></td>';
+            html += '<td>' + escapeHtml(paymentText(row.payment_status, row.due_amount)) + '</td>';
+            html += '<td>' + escapeHtml(statusText(row.status)) + '</td>';
+            html += '</tr>';
+        });
+
+        $('#printSalesTableBody').html(html);
+    }
+
     function actionButtons(row) {
         let id = parseInt(row.id || 0);
         let due = parseFloat(row.due_amount || 0);
@@ -130,6 +224,43 @@ $(document).ready(function () {
         }
 
         return html;
+    }
+
+    function paymentText(paymentStatus, dueAmount) {
+        let status = parseInt(paymentStatus || 0);
+        let due = parseFloat(dueAmount || 0);
+
+        if (due <= 0 || status === 2) {
+            return 'Paid';
+        }
+
+        if (status === 1) {
+            return 'Part Paid';
+        }
+
+        return 'Pending';
+    }
+
+    function statusText(status) {
+        status = parseInt(status || 0);
+
+        if (status === 1) {
+            return 'Active';
+        }
+
+        if (status === 2) {
+            return 'Completed';
+        }
+
+        if (status === 3) {
+            return 'Deleted';
+        }
+
+        if (status === 4) {
+            return 'Cancelled';
+        }
+
+        return 'Unknown';
     }
 
     function paymentBadge(paymentStatus, dueAmount) {
@@ -207,6 +338,24 @@ $(document).ready(function () {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2
         });
+    }
+
+    function numberFormat(value) {
+        return Number(value || 0).toLocaleString('en-IN', {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0
+        });
+    }
+
+    function updatePrintGeneratedAt() {
+        let now = new Date();
+        $('#printGeneratedAt').text(now.toLocaleString('en-IN', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        }));
     }
 
     function showToastSafe(type, message) {

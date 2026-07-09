@@ -47,7 +47,7 @@ $page_title = ($customerId > 0 ? 'Edit Customer' : 'Add Customer') . ' | Univers
                     </div>
                 </div>
 
-                <form id="customerForm" autocomplete="off">
+                <form id="customerForm" autocomplete="off" novalidate>
                     <?= csrfTokenInput(); ?>
                     <input type="hidden" name="customer_id" id="customer_id" value="<?= (int)$customerId; ?>">
 
@@ -68,8 +68,8 @@ $page_title = ($customerId > 0 ? 'Edit Customer' : 'Add Customer') . ' | Univers
                                 </div>
 
                                 <div class="col-md-4 mt-3">
-                                    <label class="form-label">Mobile</label>
-                                    <input type="text" class="form-control" id="mobile" name="mobile" maxlength="10" placeholder="Enter mobile">
+                                    <label class="form-label">Mobile <span class="text-danger">*</span></label>
+                                    <input type="text" class="form-control" id="mobile" name="mobile" maxlength="10" inputmode="numeric" pattern="[0-9]{10}" placeholder="Enter mobile">
                                 </div>
                                 <div class="col-md-4 mt-3">
                                     <label class="form-label">Email</label>
@@ -102,7 +102,7 @@ $page_title = ($customerId > 0 ? 'Edit Customer' : 'Add Customer') . ' | Univers
                                 </div>
                                 <div class="col-md-4 mt-3">
                                     <label class="form-label">Pincode</label>
-                                    <input type="text" class="form-control" id="pincode" name="pincode" maxlength="6" placeholder="Enter pincode">
+                                    <input type="text" class="form-control" id="pincode" name="pincode" maxlength="6" inputmode="numeric" placeholder="Enter pincode">
                                 </div>
                             </div>
                         </div>

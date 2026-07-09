@@ -205,7 +205,7 @@ body[data-topbar=dark] .dropdown .show.header-item {
 }
 
 .page-content {
-    padding: calc(71px) calc(1.5rem / 2) 60px calc(1.5rem / 2);
+    padding: calc(94px) calc(1.5rem / 2) 60px calc(1.5rem / 2);
     padding-bottom: 60px
 }
 

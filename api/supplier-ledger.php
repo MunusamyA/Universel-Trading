@@ -112,6 +112,7 @@ function getPageContext(PDO $pdo)
             'can_view' => ledgerCan(1) || supplierRelatedCan(1),
             'can_list' => ledgerCan(2) || supplierRelatedCan(2),
             'can_print' => ledgerCan(6),
+            'can_export' => ledgerCan(7) || ledgerCan(6),
             'page_title' => 'Supplier Ledger',
             'page_note' => 'Supplier debit / credit / balance statement'
         ]

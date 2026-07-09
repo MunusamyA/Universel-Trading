@@ -472,7 +472,11 @@ function savePurchase(PDO $pdo)
             $wholesaleSchemeType = 1;
         }
 
-        $product = getProductRow($pdo, $scope, $productId);
+        $product = findProductRow($pdo, $scope, $productId);
+        if (!$product) {
+            jsonResponse(false, 'Invalid product in row ' . ($index + 1) . '. Product ID ' . $productId . ' does not exist in this business / branch. Please remove and select product again.');
+            exit;
+        }
 
         $baseUnit = cleanInput($item['base_unit'] ?? ($product['base_unit'] ?? 'Piece'));
         $boxLabel = cleanInput($item['box_label'] ?? ($product['box_label'] ?? 'Box'));
@@ -829,6 +833,12 @@ function insertPurchaseItems(PDO $pdo, array $scope, $purchaseId, array $items)
     $itemStmt = $pdo->prepare($itemSql);
 
     foreach ($items as $item) {
+        $validProduct = findProductRow($pdo, $scope, (int)($item['product_id'] ?? 0));
+
+        if (!$validProduct) {
+            throw new Exception('Invalid product selected in purchase items. Product ID: ' . (int)($item['product_id'] ?? 0) . '. Please remove this row and select the product again.');
+        }
+
         $itemStmt->execute([
             ':purchase_id' => $purchaseId,
             ':business_id' => $scope['business_id'],
@@ -1131,8 +1141,12 @@ function getProduct(PDO $pdo)
     ]);
 }
 
-function getProductRow(PDO $pdo, array $scope, $productId)
+function findProductRow(PDO $pdo, array $scope, int $productId): ?array
 {
+    if ($productId <= 0) {
+        return null;
+    }
+
     $stmt = $pdo->prepare("
         SELECT
             p.*,
@@ -1148,6 +1162,7 @@ function getProductRow(PDO $pdo, array $scope, $productId)
         AND p.status = 1
         LIMIT 1
     ");
+
     $stmt->execute([
         ':id' => $productId,
         ':business_id' => $scope['business_id'],
@@ -1156,8 +1171,17 @@ function getProductRow(PDO $pdo, array $scope, $productId)
 
     $product = $stmt->fetch(PDO::FETCH_ASSOC);
 
+    return $product ?: null;
+}
+
+function getProductRow(PDO $pdo, array $scope, $productId)
+{
+    $productId = (int)$productId;
+    $product = findProductRow($pdo, $scope, $productId);
+
     if (!$product) {
-        jsonResponse(false, 'Invalid product selected.');
+        jsonResponse(false, 'Invalid product selected. Product not found in the current business / branch. Please remove the row and select the product again.');
+        exit;
     }
 
     return $product;

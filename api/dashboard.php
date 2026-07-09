@@ -439,43 +439,45 @@ $hasSuppliers = dashTableExists($pdo, 'suppliers');
 $hasPurchaseItems = dashTableExists($pdo, 'purchase_items');
 
 $platformStats = $isPlatformOwnerDashboard ? dashboardPlatformStats($pdo) : [];
+$showOperationalDashboard = !$isPlatformOwnerDashboard;
 
 $salesWhere = $scopeSql . " AND status IN (1,2)";
 $activeWhere = $scopeSql . " AND status = 1";
 
-$todaySales = $hasSales ? (float)dashValue($pdo, "SELECT COALESCE(SUM(grand_total),0) FROM sales WHERE $salesWhere AND document_type IN (4,5) AND sales_date = CURDATE()", $scope) : 0;
-$todaySalesCount = $hasSales ? (int)dashValue($pdo, "SELECT COUNT(*) FROM sales WHERE $salesWhere AND document_type IN (4,5) AND sales_date = CURDATE()", $scope) : 0;
+// Sales amount cards include Sales Bill, Direct Sale and Final Invoice.
+$todaySales = ($showOperationalDashboard && $hasSales) ? (float)dashValue($pdo, "SELECT COALESCE(SUM(grand_total),0) FROM sales WHERE $salesWhere AND document_type IN (3,4,5) AND sales_date = CURDATE()", $scope) : 0;
+$todaySalesCount = ($showOperationalDashboard && $hasSales) ? (int)dashValue($pdo, "SELECT COUNT(*) FROM sales WHERE $salesWhere AND document_type IN (3,4,5) AND sales_date = CURDATE()", $scope) : 0;
 
-$monthSales = $hasSales ? (float)dashValue($pdo, "SELECT COALESCE(SUM(grand_total),0) FROM sales WHERE $salesWhere AND document_type IN (4,5) AND sales_date BETWEEN :from_date AND :to_date", $scope + [':from_date' => $monthStart, ':to_date' => $monthEnd]) : 0;
-$monthSalesCount = $hasSales ? (int)dashValue($pdo, "SELECT COUNT(*) FROM sales WHERE $salesWhere AND document_type IN (4,5) AND sales_date BETWEEN :from_date AND :to_date", $scope + [':from_date' => $monthStart, ':to_date' => $monthEnd]) : 0;
+$monthSales = ($showOperationalDashboard && $hasSales) ? (float)dashValue($pdo, "SELECT COALESCE(SUM(grand_total),0) FROM sales WHERE $salesWhere AND document_type IN (3,4,5) AND sales_date BETWEEN :from_date AND :to_date", $scope + [':from_date' => $monthStart, ':to_date' => $monthEnd]) : 0;
+$monthSalesCount = ($showOperationalDashboard && $hasSales) ? (int)dashValue($pdo, "SELECT COUNT(*) FROM sales WHERE $salesWhere AND document_type IN (3,4,5) AND sales_date BETWEEN :from_date AND :to_date", $scope + [':from_date' => $monthStart, ':to_date' => $monthEnd]) : 0;
 
-$pendingReceivable = $hasSales ? (float)dashValue($pdo, "SELECT COALESCE(SUM(due_amount),0) FROM sales WHERE $salesWhere AND document_type IN (4,5)", $scope) : 0;
-$totalDocuments = $hasSales ? (int)dashValue($pdo, "SELECT COUNT(*) FROM sales WHERE $salesWhere", $scope) : 0;
-$quotationValue = $hasSales ? (float)dashValue($pdo, "SELECT COALESCE(SUM(grand_total),0) FROM sales WHERE $salesWhere AND document_type = 1", $scope) : 0;
-$finalInvoiceValue = $hasSales ? (float)dashValue($pdo, "SELECT COALESCE(SUM(grand_total),0) FROM sales WHERE $salesWhere AND document_type = 5", $scope) : 0;
+$pendingReceivable = ($showOperationalDashboard && $hasSales) ? (float)dashValue($pdo, "SELECT COALESCE(SUM(due_amount),0) FROM sales WHERE $salesWhere AND document_type IN (3,4,5)", $scope) : 0;
+$totalDocuments = ($showOperationalDashboard && $hasSales) ? (int)dashValue($pdo, "SELECT COUNT(*) FROM sales WHERE $salesWhere", $scope) : 0;
+$quotationValue = ($showOperationalDashboard && $hasSales) ? (float)dashValue($pdo, "SELECT COALESCE(SUM(grand_total),0) FROM sales WHERE $salesWhere AND document_type = 1", $scope) : 0;
+$finalInvoiceValue = ($showOperationalDashboard && $hasSales) ? (float)dashValue($pdo, "SELECT COALESCE(SUM(grand_total),0) FROM sales WHERE $salesWhere AND document_type = 5", $scope) : 0;
 
 $todayCollection = 0;
-if ($hasSalesPayments) {
+if ($showOperationalDashboard && $hasSalesPayments) {
     $todayCollection = (float)dashValue($pdo, "SELECT COALESCE(SUM(payment_amount),0) FROM sales_payments WHERE $activeWhere AND payment_date = CURDATE()", $scope);
-} elseif ($hasCustomerPayments) {
+} elseif ($showOperationalDashboard && $hasCustomerPayments) {
     $amountExpr = dashColumnExists($pdo, 'customer_payments', 'payment_amount') ? 'payment_amount' : 'amount';
     $todayCollection = (float)dashValue($pdo, "SELECT COALESCE(SUM($amountExpr),0) FROM customer_payments WHERE $activeWhere AND payment_date = CURDATE()", $scope);
 }
 
-$monthPurchase = $hasPurchases ? (float)dashValue($pdo, "SELECT COALESCE(SUM(grand_total),0) FROM purchases WHERE $activeWhere AND purchase_date BETWEEN :from_date AND :to_date", $scope + [':from_date' => $monthStart, ':to_date' => $monthEnd]) : 0;
-$purchaseDue = $hasPurchases ? (float)dashValue($pdo, "SELECT COALESCE(SUM(due_amount),0) FROM purchases WHERE $activeWhere", $scope) : 0;
+$monthPurchase = ($showOperationalDashboard && $hasPurchases) ? (float)dashValue($pdo, "SELECT COALESCE(SUM(grand_total),0) FROM purchases WHERE $activeWhere AND purchase_date BETWEEN :from_date AND :to_date", $scope + [':from_date' => $monthStart, ':to_date' => $monthEnd]) : 0;
+$purchaseDue = ($showOperationalDashboard && $hasPurchases) ? (float)dashValue($pdo, "SELECT COALESCE(SUM(due_amount),0) FROM purchases WHERE $activeWhere", $scope) : 0;
 
 $expenseAmountColumn = ($hasExpenses && dashColumnExists($pdo, 'expenses', 'total_amount')) ? 'total_amount' : 'amount';
-$monthExpense = $hasExpenses ? (float)dashValue($pdo, "SELECT COALESCE(SUM($expenseAmountColumn),0) FROM expenses WHERE $activeWhere AND expense_date BETWEEN :from_date AND :to_date", $scope + [':from_date' => $monthStart, ':to_date' => $monthEnd]) : 0;
+$monthExpense = ($showOperationalDashboard && $hasExpenses) ? (float)dashValue($pdo, "SELECT COALESCE(SUM($expenseAmountColumn),0) FROM expenses WHERE $activeWhere AND expense_date BETWEEN :from_date AND :to_date", $scope + [':from_date' => $monthStart, ':to_date' => $monthEnd]) : 0;
 
-$totalCustomers = $hasCustomers ? (int)dashValue($pdo, "SELECT COUNT(*) FROM customers WHERE $activeWhere", $scope) : 0;
-$totalProducts = $hasProducts ? (int)dashValue($pdo, "SELECT COUNT(*) FROM products WHERE $activeWhere", $scope) : 0;
-$totalSuppliers = $hasSuppliers ? (int)dashValue($pdo, "SELECT COUNT(*) FROM suppliers WHERE $activeWhere", $scope) : 0;
+$totalCustomers = ($showOperationalDashboard && $hasCustomers) ? (int)dashValue($pdo, "SELECT COUNT(*) FROM customers WHERE $activeWhere", $scope) : 0;
+$totalProducts = ($showOperationalDashboard && $hasProducts) ? (int)dashValue($pdo, "SELECT COUNT(*) FROM products WHERE $activeWhere", $scope) : 0;
+$totalSuppliers = ($showOperationalDashboard && $hasSuppliers) ? (int)dashValue($pdo, "SELECT COUNT(*) FROM suppliers WHERE $activeWhere", $scope) : 0;
 
-$stockValue = $hasPurchaseItems ? (float)dashValue($pdo, "SELECT COALESCE(SUM(available_qty * purchase_price),0) FROM purchase_items WHERE $activeWhere", $scope) : 0;
+$stockValue = ($showOperationalDashboard && $hasPurchaseItems) ? (float)dashValue($pdo, "SELECT COALESCE(SUM(available_qty * purchase_price),0) FROM purchase_items WHERE $activeWhere", $scope) : 0;
 
 $lowStockProducts = [];
-if ($hasProducts && $hasPurchaseItems) {
+if (!$isPlatformOwnerDashboard && $hasProducts && $hasPurchaseItems) {
     $lowStockProducts = dashRows($pdo, "
         SELECT
             p.product_code,
@@ -510,12 +512,12 @@ for ($i = 9; $i >= 0; $i--) {
 $last10DayKeys = array_keys($last10Days);
 $firstChartDate = isset($last10DayKeys[0]) ? $last10DayKeys[0] : $today;
 
-if ($hasSales) {
+if ($showOperationalDashboard && $hasSales) {
     $rows = dashRows($pdo, "
         SELECT sales_date, COALESCE(SUM(grand_total),0) AS amount
         FROM sales
         WHERE $salesWhere
-          AND document_type IN (4,5)
+          AND document_type IN (3,4,5)
           AND sales_date BETWEEN :from_date AND :to_date
         GROUP BY sales_date
         ORDER BY sales_date ASC
@@ -540,7 +542,7 @@ $pipeline = [
     5 => ['count' => 0, 'amount' => 0]
 ];
 
-if ($hasSales) {
+if ($showOperationalDashboard && $hasSales) {
     $rows = dashRows($pdo, "
         SELECT document_type, COUNT(*) AS total_count, COALESCE(SUM(grand_total),0) AS amount
         FROM sales
@@ -577,7 +579,7 @@ if (!$isPlatformOwnerDashboard && $hasSales) {
     ", $scope);
 }
 
-$topDueCustomers = $hasCustomers ? dashRows($pdo, "
+$topDueCustomers = (!$isPlatformOwnerDashboard && $hasCustomers) ? dashRows($pdo, "
     SELECT customer_name, mobile, current_outstanding
     FROM customers
     WHERE $activeWhere
@@ -598,7 +600,7 @@ foreach ($last10Days as $dateKey => $dayInfo) {
     $collection10Days[$dateKey] = 0;
 }
 
-if ($hasSalesPayments) {
+if ($showOperationalDashboard && $hasSalesPayments) {
     $rows = dashRows($pdo, "
         SELECT payment_date, COALESCE(SUM(payment_amount),0) AS amount
         FROM sales_payments
@@ -618,7 +620,7 @@ if ($hasSalesPayments) {
             $collection10Days[$date] = (float)$row['amount'];
         }
     }
-} elseif ($hasCustomerPayments) {
+} elseif ($showOperationalDashboard && $hasCustomerPayments) {
     $paymentAmountColumn = dashColumnExists($pdo, 'customer_payments', 'payment_amount') ? 'payment_amount' : 'amount';
     $rows = dashRows($pdo, "
         SELECT payment_date, COALESCE(SUM($paymentAmountColumn),0) AS amount
