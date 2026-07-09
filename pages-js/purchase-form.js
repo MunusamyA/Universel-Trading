@@ -1341,7 +1341,6 @@ $(document).ready(function () {
 
         if (autoRoundOffEnabled) {
             $('#roundOffToggleBtn').removeClass('btn-outline-secondary').addClass('btn-success').text('Rounded');
-            $('#roundOffHelpText').text('Round off enabled. + adds amount, - reduces amount. Click Rounded to remove round off.');
         } else {
             $('#roundOffToggleBtn').removeClass('btn-success').addClass('btn-outline-secondary').text('Round');
             $('#roundOffHelpText').text('Use + amount to add and - amount to reduce. Click Round to nearest rupee.');
