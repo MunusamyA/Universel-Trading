@@ -17,6 +17,19 @@ $page_title = ($purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase') . ' | Univers
 <style>
 #productSuggestionBox .product-suggestion-item { text-align:left; cursor:pointer; }
 #productSuggestionBox .product-suggestion-item:hover { background:#f8f9fa; }
+.purchase-products-table { min-width: 1540px; }
+.purchase-products-table th,
+.purchase-products-table td { vertical-align: middle; }
+.purchase-products-table .scheme-disc-col { min-width: 210px; width: 210px; }
+.purchase-products-table .gst-col { min-width: 210px; width: 210px; }
+.purchase-products-table .scheme-disc-col .input-group,
+.purchase-products-table .gst-col .input-group { flex-wrap: nowrap; min-width: 185px; }
+.purchase-products-table .scheme-disc-col .form-select,
+.purchase-products-table .gst-col .form-select { flex: 0 0 72px; max-width: 72px; }
+.purchase-products-table .scheme-disc-col input,
+.purchase-products-table .gst-col input { min-width: 95px; }
+.purchase-products-table .item-gst-amount,
+.purchase-products-table .item-taxable-total { white-space: nowrap; }
 </style>
 </head>
 
@@ -244,7 +257,7 @@ $page_title = ($purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase') . ' | Univers
 
                         <div class="card-body">
                             <div class="table-responsive">
-                                <table class="table table-bordered align-middle">
+                                <table class="table table-bordered align-middle purchase-products-table">
                                     <thead class="table-light">
                                     <tr>
                                         <th style="min-width:220px;">Product</th>
@@ -252,8 +265,8 @@ $page_title = ($purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase') . ' | Univers
                                         <th style="min-width:95px;">Free</th>
                                         <th style="min-width:120px;">Conv.</th>
                                         <th style="min-width:120px;">P.Price</th>
-                                        <th style="min-width:130px;">Scheme Disc.</th>
-                                        <th style="min-width:120px;">GST</th>
+                                        <th class="scheme-disc-col">Scheme Disc.</th>
+                                        <th class="gst-col">GST</th>
                                         <th style="min-width:120px;">MRP</th>
                                         <th style="min-width:135px;">Expiry</th>
                                         <th style="min-width:120px;">Total</th>

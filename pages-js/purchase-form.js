@@ -135,10 +135,27 @@ $(document).ready(function () {
         $('#productSearchInput').focus();
     });
 
-    $(document).on('input change', '.item-calc', function () {
-        let index = parseInt($(this).closest('tr').data('index'));
+    $(document).on('input', '.item-calc', function () {
+        let row = $(this).closest('tr');
+        let index = parseInt(row.data('index'));
         updateItemFromRow(index);
-        renderItems();
+        updateItemRowAmounts(row, index);
+        calculateTotals();
+    });
+
+    $(document).on('change blur', '.item-calc', function () {
+        let row = $(this).closest('tr');
+        let index = parseInt(row.data('index'));
+        updateItemFromRow(index);
+        updateItemRowAmounts(row, index);
+        calculateTotals();
+    });
+
+    $(document).on('keydown', '.item-calc', function (event) {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            $(this).blur();
+        }
     });
 
     $(document).on('click', '.remove-item-btn', function () {
@@ -1149,7 +1166,7 @@ $(document).ready(function () {
                         <small class="text-muted">Stock: ${numberFormat4(item.stock_qty || 0)}</small>
                     </td>
                     <td><input type="number" step="0.01" min="0" class="form-control form-control-sm item-calc" id="item_purchase_price_${index}" data-field="purchase_price" value="${item.purchase_price}"></td>
-                    <td>
+                    <td class="scheme-disc-col">
                         <div class="input-group input-group-sm">
                             <select class="form-select item-calc" data-field="discount_type">
                                 <option value="2" ${parseInt(item.discount_type) === 2 ? 'selected' : ''}>₹</option>
@@ -1158,7 +1175,7 @@ $(document).ready(function () {
                             <input type="number" step="0.01" min="0" class="form-control item-calc" data-field="discount_value" value="${item.discount_value}">
                         </div>
                     </td>
-                    <td>
+                    <td class="gst-col">
                         <div class="input-group input-group-sm">
                             <select class="form-select item-calc" data-field="gst_type">
                                 <option value="2" ${parseInt(item.gst_type) === 2 ? 'selected' : ''}>Excl</option>
@@ -1166,7 +1183,7 @@ $(document).ready(function () {
                             </select>
                             <input type="number" step="0.01" min="0" class="form-control item-calc" data-field="gst_percentage" value="${item.gst_percentage}">
                         </div>
-                        <small class="text-muted">GST ₹${numberFormat(item.gst_amount || 0)}</small>
+                        <small class="text-muted item-gst-amount">GST ₹${numberFormat(item.gst_amount || 0)}</small>
                     </td>
                     <td><input type="number" step="0.01" min="0" class="form-control form-control-sm item-calc" data-field="mrp" value="${item.mrp}"></td>
                     <td>
@@ -1174,8 +1191,8 @@ $(document).ready(function () {
                         <input type="date" class="form-control form-control-sm item-calc" data-field="expiry_date" value="${item.expiry_date || ''}">
                     </td>
                     <td>
-                        <strong>₹${numberFormat(item.line_total || 0)}</strong><br>
-                        <small class="text-muted">Taxable ₹${numberFormat(item.taxable_amount || 0)}</small>
+                        <strong class="item-line-total">₹${numberFormat(item.line_total || 0)}</strong><br>
+                        <small class="text-muted item-taxable-total">Taxable ₹${numberFormat(item.taxable_amount || 0)}</small>
                     </td>
                     <td>
                         <button type="button" class="btn btn-sm btn-outline-danger remove-item-btn">
@@ -1189,6 +1206,25 @@ $(document).ready(function () {
         $('#itemsBody').html(html);
         calculateTotals();
         refreshProductSelectOptions();
+    }
+
+    function updateItemRowAmounts(row, index) {
+        if (!items[index] || row.length === 0) {
+            return;
+        }
+
+        let item = items[index];
+        row.find('.item-gst-amount').text('GST ₹' + numberFormat(item.gst_amount || 0));
+        row.find('.item-line-total').text('₹' + numberFormat(item.line_total || 0));
+        row.find('.item-taxable-total').text('Taxable ₹' + numberFormat(item.taxable_amount || 0));
+
+        if ($(document.activeElement).data('field') !== 'expiry_date') {
+            row.find('[data-field="expiry_date"]').val(item.expiry_date || '');
+        }
+
+        row.find('small.text-muted').filter(function () {
+            return $(this).text().indexOf('Stock:') === 0;
+        }).text('Stock: ' + numberFormat4(item.stock_qty || 0));
     }
 
     function updateItemFromRow(index) {
