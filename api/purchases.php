@@ -540,7 +540,8 @@ function savePurchase(PDO $pdo)
             $expiryDate = null;
         }
 
-        $subTotal += $lineGross;
+        // Sub Total must be taxable amount after item scheme discount, not gross before scheme.
+        $subTotal += $taxableAmount;
         $taxAmount += $itemGstAmount;
 
         $cleanItems[] = [
@@ -606,12 +607,14 @@ function savePurchase(PDO $pdo)
         $purchaseDiscountAmount = $subTotal;
     }
 
-    $itemsTotal = 0;
-    foreach ($cleanItems as $item) {
-        $itemsTotal += $item['line_total'];
+    // Bill discount is reduced only from taxable amount.
+    // Grand Total = (Taxable Sub Total - Bill Discount) + GST + Round Off.
+    $taxableAfterBillDiscount = round($subTotal - $purchaseDiscountAmount, 2);
+    if ($taxableAfterBillDiscount < 0) {
+        $taxableAfterBillDiscount = 0;
     }
 
-    $grandTotal = round($itemsTotal - $purchaseDiscountAmount + $roundOff, 2);
+    $grandTotal = round($taxableAfterBillDiscount + $taxAmount + $roundOff, 2);
 
     if ($grandTotal < 0) {
         $grandTotal = 0;

@@ -8,6 +8,7 @@ $(document).ready(function () {
     let productMasters = { categories: [], sub_categories: [], hsn_codes: [] };
     let paymentModes = [];
     let purchasePaymentSplits = [];
+    let autoRoundOffEnabled = false;
 
     let pageContext = {
         can_add: false,
@@ -22,6 +23,7 @@ $(document).ready(function () {
     syncQuickSecondaryUnitFields();
 
     loadPageContext();
+    updateRoundOffButtonState();
 
     $('#productSearchInput').on('focus click', function () {
         showProductSuggestions($(this).val());
@@ -157,6 +159,22 @@ $(document).ready(function () {
     });
 
     $('.calc-main').on('input change', function () {
+        if ($(this).attr('id') === 'round_off') {
+            autoRoundOffEnabled = false;
+            updateRoundOffButtonState();
+        }
+        calculateTotals();
+        syncPurchaseSplitsWithPaidAmount();
+    });
+
+    $('#roundOffToggleBtn').on('click', function () {
+        autoRoundOffEnabled = !autoRoundOffEnabled;
+
+        if (!autoRoundOffEnabled) {
+            $('#round_off').val('0.00');
+        }
+
+        updateRoundOffButtonState();
         calculateTotals();
         syncPurchaseSplitsWithPaidAmount();
     });
@@ -1282,32 +1300,61 @@ $(document).ready(function () {
         return item;
     }
 
+    function updateRoundOffButtonState() {
+        if (autoRoundOffEnabled) {
+            $('#roundOffToggleBtn').removeClass('btn-outline-secondary').addClass('btn-success').text('Rounded');
+            $('#roundOffHelpText').text('Round off enabled. Click Rounded to remove round off.');
+        } else {
+            $('#roundOffToggleBtn').removeClass('btn-success').addClass('btn-outline-secondary').text('Round');
+            $('#roundOffHelpText').text('Click Round to make Grand Total nearest rupee.');
+        }
+    }
+
     function calculateTotals() {
-        let subTotal = 0;
+        let subTotal = 0; // taxable amount after item scheme discount
         let taxAmount = 0;
-        let itemsTotal = 0;
 
         $.each(items, function (_, item) {
             calculateItem(item);
-            subTotal += parseFloat(item.qty || 0) * parseFloat(item.purchase_price || 0);
+            subTotal += parseFloat(item.taxable_amount || 0);
             taxAmount += parseFloat(item.gst_amount || 0);
-            itemsTotal += parseFloat(item.line_total || 0);
         });
+
+        subTotal = round2(subTotal);
+        taxAmount = round2(taxAmount);
 
         let discountType = parseInt($('#discount_type').val() || 1);
         let discountValue = parseFloat($('#discount_value').val() || 0);
-        let roundOff = parseFloat($('#round_off').val() || 0);
         let paidAmount = parseFloat($('#paid_amount').val() || 0);
 
         let billDiscount = discountType === 1
             ? subTotal * discountValue / 100
             : discountValue;
 
+        billDiscount = round2(billDiscount);
+
         if (billDiscount > subTotal) {
             billDiscount = subTotal;
         }
 
-        let grandTotal = itemsTotal - billDiscount + roundOff;
+        let taxableAfterBillDiscount = round2(subTotal - billDiscount);
+        if (taxableAfterBillDiscount < 0) {
+            taxableAfterBillDiscount = 0;
+        }
+
+        let grandBeforeRoundOff = round2(taxableAfterBillDiscount + taxAmount);
+        let roundOff = parseFloat($('#round_off').val() || 0);
+
+        if (autoRoundOffEnabled) {
+            let roundedTotal = Math.round(grandBeforeRoundOff);
+            roundOff = round2(roundedTotal - grandBeforeRoundOff);
+            if (Math.abs(roundOff) < 0.005) {
+                roundOff = 0;
+            }
+            $('#round_off').val(roundOff.toFixed(2));
+        }
+
+        let grandTotal = round2(grandBeforeRoundOff + roundOff);
 
         if (grandTotal < 0) {
             grandTotal = 0;
@@ -1318,12 +1365,12 @@ $(document).ready(function () {
             $('#paid_amount').val(paidAmount.toFixed(2));
         }
 
-        let dueAmount = grandTotal - paidAmount;
+        let dueAmount = round2(grandTotal - paidAmount);
 
-        $('#sub_total').val(round2(subTotal).toFixed(2));
-        $('#tax_amount').val(round2(taxAmount).toFixed(2));
-        $('#grand_total').val(round2(grandTotal).toFixed(2));
-        $('#due_amount').val(round2(dueAmount).toFixed(2));
+        $('#sub_total').val(subTotal.toFixed(2));
+        $('#tax_amount').val(taxAmount.toFixed(2));
+        $('#grand_total').val(grandTotal.toFixed(2));
+        $('#due_amount').val(dueAmount.toFixed(2));
     }
 
     function loadPurchase(purchaseId) {
@@ -1349,6 +1396,8 @@ $(document).ready(function () {
                     $('#discount_type').val(purchase.discount_type);
                     $('#discount_value').val(parseFloat(purchase.discount_value || 0).toFixed(2));
                     $('#round_off').val(parseFloat(purchase.round_off || 0).toFixed(2));
+                    autoRoundOffEnabled = false;
+                    updateRoundOffButtonState();
                     $('#paid_amount').val(parseFloat(purchase.paid_amount || 0).toFixed(2));
                     purchasePaymentSplits = [];
                     syncPurchaseSplitsWithPaidAmount();

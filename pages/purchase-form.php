@@ -310,7 +310,11 @@ $page_title = ($purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase') . ' | Univers
                                     <div class="row mb-2">
                                         <label class="col-5 col-form-label">Round Off</label>
                                         <div class="col-7">
-                                            <input type="number" step="0.01" class="form-control text-end calc-main" id="round_off" name="round_off" value="0.00">
+                                            <div class="input-group">
+                                                <input type="number" step="0.01" class="form-control text-end calc-main" id="round_off" name="round_off" value="0.00">
+                                                <button class="btn btn-outline-secondary" type="button" id="roundOffToggleBtn" title="Click once to round grand total, click again to remove round off">Round</button>
+                                            </div>
+                                            <small class="text-muted" id="roundOffHelpText">Click Round to make Grand Total nearest rupee.</small>
                                         </div>
                                     </div>
 
