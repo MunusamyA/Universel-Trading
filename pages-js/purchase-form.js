@@ -1337,13 +1337,32 @@ $(document).ready(function () {
     }
 
     function updateRoundOffButtonState() {
+        updateRoundOffSign();
+
         if (autoRoundOffEnabled) {
             $('#roundOffToggleBtn').removeClass('btn-outline-secondary').addClass('btn-success').text('Rounded');
-            $('#roundOffHelpText').text('Round off enabled. Click Rounded to remove round off.');
+            $('#roundOffHelpText').text('Round off enabled. + adds amount, - reduces amount. Click Rounded to remove round off.');
         } else {
             $('#roundOffToggleBtn').removeClass('btn-success').addClass('btn-outline-secondary').text('Round');
-            $('#roundOffHelpText').text('Click Round to make Grand Total nearest rupee.');
+            $('#roundOffHelpText').text('Use + amount to add and - amount to reduce. Click Round to nearest rupee.');
         }
+    }
+
+    function updateRoundOffSign() {
+        let roundOff = parseFloat($('#round_off').val() || 0);
+        let signText = '±';
+
+        $('#roundOffSignAddon').removeClass('text-success text-danger');
+
+        if (roundOff > 0) {
+            signText = '+';
+            $('#roundOffSignAddon').addClass('text-success');
+        } else if (roundOff < 0) {
+            signText = '-';
+            $('#roundOffSignAddon').addClass('text-danger');
+        }
+
+        $('#roundOffSignAddon').text(signText);
     }
 
     function calculateTotals() {
@@ -1389,6 +1408,8 @@ $(document).ready(function () {
             }
             $('#round_off').val(roundOff.toFixed(2));
         }
+
+        updateRoundOffSign();
 
         let grandTotal = round2(grandBeforeRoundOff + roundOff);
 
