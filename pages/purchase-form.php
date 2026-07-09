@@ -328,7 +328,7 @@ $page_title = ($purchaseId > 0 ? 'Edit Purchase' : 'Add Purchase') . ' | Univers
                                                 <input type="number" step="0.01" class="form-control text-end calc-main" id="round_off" name="round_off" value="0.00" placeholder="+ add / - reduce">
                                                 <button class="btn btn-outline-secondary" type="button" id="roundOffToggleBtn" title="Click once to round grand total, click again to remove round off">Round</button>
                                             </div>
-                                            <small class="text-muted" id="roundOffHelpText">Use + amount to add and - amount to reduce. Click Round to nearest rupee.</small>
+                                            <!-- <small class="text-muted" id="roundOffHelpText">Use + amount to add and - amount to reduce. Click Round to nearest rupee.</small> -->
                                         </div>
                                     </div>
 
