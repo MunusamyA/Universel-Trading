@@ -363,9 +363,6 @@ $salesPageConfig = [
                                         </div>
                                     </div>
                                 </div>
-                                <div class="col-lg-4">
-                                    <small class="text-muted">Select product, choose batch, enter qty/price details in popup, then add item.</small>
-                                </div>
                             </div>
                         </div>
                     </div>
