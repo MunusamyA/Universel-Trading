@@ -987,7 +987,39 @@ function spRecalcPurchase(PDO $pdo, array $scope, $purchaseId)
         ':purchase_id' => $purchaseId
     ]);
 
-    $paidAmount = round((float)$stmt->fetchColumn(), 2);
+    $allocationPaid = round((float)$stmt->fetchColumn(), 2);
+
+    /*
+     * Safety fix:
+     * Old purchase-form direct payments may exist in supplier_payments with
+     * source_type = purchase_form and source_id = purchases.id, but without
+     * supplier_payment_allocations rows. Count only those unallocated direct
+     * payments here, so allocated payments are not double-counted.
+     */
+    $stmt = $pdo->prepare("
+        SELECT COALESCE(SUM(sp.total_amount), 0)
+        FROM supplier_payments sp
+        LEFT JOIN supplier_payment_allocations spa
+            ON spa.supplier_payment_id = sp.id
+            AND spa.business_id = sp.business_id
+            AND spa.branch_id = sp.branch_id
+            AND spa.status = 1
+        WHERE sp.business_id = :business_id
+        AND sp.branch_id = :branch_id
+        AND sp.source_type = 'purchase_form'
+        AND sp.source_id = :purchase_id
+        AND sp.status = 1
+        AND spa.id IS NULL
+    ");
+    $stmt->execute([
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id'],
+        ':purchase_id' => $purchaseId
+    ]);
+
+    $directPurchaseFormPaid = round((float)$stmt->fetchColumn(), 2);
+    $paidAmount = round($allocationPaid + $directPurchaseFormPaid, 2);
+
     if ($paidAmount > $grandTotal) {
         $paidAmount = $grandTotal;
     }
@@ -1086,16 +1118,23 @@ function spCalculateSupplierBalance(PDO $pdo, array $scope, $supplierId)
 
     $purchaseDue = round((float)($purchase['purchase_due'] ?? 0), 2);
 
+    $purchaseTotal = round((float)($purchase['purchase_total'] ?? 0), 2);
+    $purchasePaid = round((float)($purchase['purchase_paid'] ?? 0), 2);
+    $totalPayable = round($openingDue + $purchaseDue, 2);
+
     return [
         'supplier_id' => $supplierId,
         'supplier_name' => $supplier['supplier_name'],
         'opening_outstanding' => $openingOutstanding,
         'opening_paid' => $openingPaid,
         'opening_due' => $openingDue,
-        'purchase_total' => round((float)($purchase['purchase_total'] ?? 0), 2),
-        'purchase_paid' => round((float)($purchase['purchase_paid'] ?? 0), 2),
+        'purchase_total' => $purchaseTotal,
+        'bill_amount' => $purchaseTotal,
+        'purchase_paid' => $purchasePaid,
+        'paid_amount' => $purchasePaid,
         'purchase_due' => $purchaseDue,
-        'total_payable' => round($openingDue + $purchaseDue, 2),
+        'due_amount' => $totalPayable,
+        'total_payable' => $totalPayable,
         'current_outstanding' => round((float)$supplier['current_outstanding'], 2)
     ];
 }

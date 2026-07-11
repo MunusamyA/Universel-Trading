@@ -68,8 +68,8 @@ $page_title = 'Suppliers | Universal ERP';
                     <div class="col-md-6 col-xl-3">
                         <div class="card text-center">
                             <div class="mb-2 card-body text-muted">
-                                <h3 class="text-success mt-2" id="activeSuppliersCount">0</h3>
-                                Active Suppliers
+                                <h3 class="text-info mt-2" id="totalBillAmount">₹0.00</h3>
+                                Overall Bill Amount
                             </div>
                         </div>
                     </div>
@@ -77,8 +77,8 @@ $page_title = 'Suppliers | Universal ERP';
                     <div class="col-md-6 col-xl-3">
                         <div class="card text-center">
                             <div class="mb-2 card-body text-muted">
-                                <h3 class="text-danger mt-2" id="inactiveSuppliersCount">0</h3>
-                                Inactive Suppliers
+                                <h3 class="text-success mt-2" id="totalPaidAmount">₹0.00</h3>
+                                Paid Amount
                             </div>
                         </div>
                     </div>
@@ -86,8 +86,8 @@ $page_title = 'Suppliers | Universal ERP';
                     <div class="col-md-6 col-xl-3">
                         <div class="card text-center">
                             <div class="mb-2 card-body text-muted">
-                                <h3 class="text-warning mt-2" id="totalOutstandingAmount">₹0.00</h3>
-                                Outstanding
+                                <h3 class="text-danger mt-2" id="totalDueAmount">₹0.00</h3>
+                                Due Amount
                             </div>
                         </div>
                     </div>
@@ -128,7 +128,9 @@ $page_title = 'Suppliers | Universal ERP';
                                         <th>GST / PAN</th>
                                         <th>DL / FL</th>
                                         <th>Bank</th>
-                                        <th>Outstanding</th>
+                                        <th class="text-end">Bill Amount</th>
+                                        <th class="text-end">Paid Amount</th>
+                                        <th class="text-end">Due Amount</th>
                                         <th>Status</th>
                                         <th width="220">Action</th>
                                     </tr>
@@ -136,7 +138,7 @@ $page_title = 'Suppliers | Universal ERP';
 
                                 <tbody id="supplierTableBody">
                                     <tr>
-                                        <td colspan="9" class="text-center text-muted">Loading...</td>
+                                        <td colspan="11" class="text-center text-muted">Loading...</td>
                                     </tr>
                                 </tbody>
                             </table>

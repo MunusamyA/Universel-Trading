@@ -38,6 +38,7 @@ $(document).ready(function () {
     let customerModal = null;
     let productEntryModal = null;
     let profitModal = null;
+    let roundOffApplied = false;
 
     const DRAFT_KEY = 'universal_erp_sales_draft';
     const HOLD_KEY = 'universal_erp_hold_bills';
@@ -118,10 +119,14 @@ $(document).ready(function () {
         /*
          * Split permission:
          * New document dropdown = Add permission only.
-         * Convert/generate mode = show target only when SOURCE document generate permission exists.
+         * Convert/generate mode = show only selected target document from list icon.
          */
-        if (mode === 'convert' && selected > 0 && canGenerateCurrentTargetDocument(selected) && $.inArray(selected, allowed) === -1) {
-            allowed.push(selected);
+        if (mode === 'convert') {
+            if (selected > 0 && canGenerateCurrentTargetDocument(selected)) {
+                allowed = [selected];
+            } else {
+                allowed = [];
+            }
         }
 
         $.each(allowed, function (_, typeId) {
@@ -469,114 +474,69 @@ $(document).ready(function () {
         let docType = parseInt($('#documentType').val() || 0);
         let config = getSalesPageConfig();
         let mode = config.mode || 'new';
+        let targetType = parseInt(config.target_type || docType || 0);
+        let targetLabel = documentLabel(targetType || docType);
 
         currentSale = currentSale || {};
 
-        /*
-         * In convert mode, save button already generates the selected target document.
-         * So hide any extra convert/generate button pointing to the same target type.
-         * Example:
-         * mode=convert&source_type=1&target_type=2
-         * Save button = Generate Proforma Bill
-         * Hide extra Generate Proforma Bill button.
-         */
-        let currentTargetType = parseInt(config.target_type || 0);
-        let isConvertMode = (mode === 'convert');
+        $('.sales-convert-btn, #printSaleBtn, #saveSaleBtn, #savePrintSaleBtn').addClass('d-none').prop('disabled', true);
 
-        /*
-         * In convert mode, the form is a new unsaved target document,
-         * so #saleId is intentionally 0.
-         * For bottom buttons like Print / Generate Invoice / Convert,
-         * use the original source document id and source document type.
-         */
-        let actionSaleId = saleId;
-        let actionDocType = docType;
+        if (!canSaveCurrentDocument()) {
+            applySalesPagePermissionControls();
+            $('.sales-convert-btn, #printSaleBtn, #saveSaleBtn, #savePrintSaleBtn').addClass('d-none').prop('disabled', true);
+            return;
+        }
 
         if (mode === 'convert') {
-            actionSaleId = parseInt(config.source_id || currentSale.id || 0);
-            actionDocType = parseInt(config.source_type || currentSale.document_type || docType || 0);
+            $('#saveSaleBtn')
+                .html('<i class="mdi mdi-receipt-text-check-outline me-1"></i> Generate ' + targetLabel)
+                .removeClass('d-none')
+                .prop('disabled', false);
+
+            $('#savePrintSaleBtn')
+                .html('<i class="mdi mdi-printer-check me-1"></i> Generate ' + targetLabel + ' & Print')
+                .removeClass('d-none')
+                .prop('disabled', false);
+
+            $('#printSaleBtn').addClass('d-none');
+            $('.sales-convert-btn').addClass('d-none');
+            return;
         }
+
+        if (saleId > 0) {
+            $('#saveSaleBtn')
+                .html('<i class="mdi mdi-content-save me-1"></i> Update')
+                .removeClass('d-none')
+                .prop('disabled', false);
+
+            $('#savePrintSaleBtn')
+                .html('<i class="mdi mdi-printer-check me-1"></i> Update & Print')
+                .removeClass('d-none')
+                .prop('disabled', false);
+
+            if (docType > 0 && docPermission(docType, 'print')) {
+                $('#printSaleBtn')
+                    .removeClass('d-none')
+                    .prop('disabled', false)
+                    .attr('data-print-id', saleId);
+            }
+
+            $('.sales-convert-btn').addClass('d-none');
+            $('#documentModeText').text('Edit mode: document type locked');
+            return;
+        }
+
+        $('#saveSaleBtn')
+            .html('<i class="mdi mdi-content-save me-1"></i> Save')
+            .removeClass('d-none')
+            .prop('disabled', false);
+
+        $('#savePrintSaleBtn')
+            .html('<i class="mdi mdi-printer-check me-1"></i> Save & Print')
+            .removeClass('d-none')
+            .prop('disabled', false);
 
         $('.sales-convert-btn, #printSaleBtn').addClass('d-none');
-        $('#saveSaleBtn, #savePrintSaleBtn').addClass('d-none').prop('disabled', true);
-
-        if (mode === 'convert') {
-            $('#saveSaleBtn').html(
-                '<i class="mdi mdi-receipt-text-check-outline me-1"></i> Generate ' +
-                documentLabel(parseInt(config.target_type || docType))
-            );
-        } else if (saleId <= 0) {
-            $('#saveSaleBtn').html('<i class="mdi mdi-content-save me-1"></i> Save');
-            applySalesPagePermissionControls();
-            return;
-        } else {
-            $('#saveSaleBtn').html('<i class="mdi mdi-content-save me-1"></i> Update');
-        }
-
-        applySalesPagePermissionControls();
-
-        if (actionSaleId <= 0 || actionDocType <= 0) {
-            return;
-        }
-
-        /*
-         * Same-row generate flow:
-         * conversion_status = 1 only means this row was generated from another type.
-         * It should NOT hide next generate buttons.
-         * Hide buttons only if converted_to_sale_id points to another different row.
-         */
-        let currentRowId = parseInt(currentSale.id || actionSaleId || 0);
-        let convertedToSaleId = parseInt(currentSale.converted_to_sale_id || 0);
-        let converted = convertedToSaleId > 0 && convertedToSaleId !== currentRowId;
-
-        if (converted && mode !== 'convert') {
-            $('#documentModeText').text('Already generated to another document');
-        }
-
-        if (docPermission(actionDocType, 'print')) {
-            $('#printSaleBtn')
-                .removeClass('d-none')
-                .attr('data-print-id', actionSaleId);
-        }
-
-        if (converted) {
-            return;
-        }
-
-        let targetButtons = [
-            {
-                target_type: 2,
-                selector: '#convertProformaBtn',
-                actions: ['generate_proforma_bill']
-            },
-            {
-                target_type: 3,
-                selector: '#convertSalesBillBtn',
-                actions: ['generate_sales_bill']
-            },
-            {
-                target_type: 5,
-                selector: '#generateInvoiceBtn',
-                actions: ['generate_invoice']
-            }
-        ];
-
-        $.each(targetButtons, function (_, btn) {
-            if (btn.target_type === actionDocType) {
-                return;
-            }
-
-            if (isConvertMode && currentTargetType === btn.target_type) {
-                return;
-            }
-
-            if (canGenerateToTarget(actionDocType, btn.target_type, btn.actions)) {
-                $(btn.selector)
-                    .removeClass('d-none')
-                    .attr('data-source-id', actionSaleId)
-                    .attr('data-source-type', actionDocType);
-            }
-        });
     }
 
     function bindEvents() {
@@ -642,11 +602,25 @@ $(document).ready(function () {
         });
 
         $('#markupType, #markupValue').on('change keyup', applyPriceType);
-        $('#headerDiscountType, #headerDiscountValue, #roundOff').on('change keyup', function () {
+        $('#headerDiscountType, #headerDiscountValue').on('change keyup', function () {
+            clearRoundOffApplied();
             renderSalesItems();
             calculateSummary();
             saveDraftToStorage();
         });
+
+        $('#roundOff').on('input', function () {
+            roundOffApplied = false;
+            updateRoundOffButtonLabel();
+            calculateSummary();
+            saveDraftToStorage();
+        }).on('blur', function () {
+            $('#roundOff').val(formatRoundOffValue(roundMoney($('#roundOff').val() || 0)));
+            calculateSummary();
+            saveDraftToStorage();
+        });
+
+        $('#roundOffToggleBtn').on('click', toggleRoundOff);
 
         $('#addItemBtn').on('click', addOrUpdateSalesItem);
         $('#cancelEditItemBtn').on('click', cancelItemEdit);
@@ -735,8 +709,13 @@ $(document).ready(function () {
 
         $('#customerForm').on('submit', saveCustomerFromSales);
 
-        $('#shippingCharges, #deliveryAddress').on('change keyup', function () {
+        $('#shippingCharges').on('change keyup', function () {
+            clearRoundOffApplied();
             calculateSummary();
+            saveDraftToStorage();
+        });
+
+        $('#deliveryAddress').on('change keyup', function () {
             saveDraftToStorage();
         });
 
@@ -1361,7 +1340,10 @@ function getBatchKey(batch) {
                         </select>
                     </td>
                     <td><input type="number" step="0.01" min="0" class="form-control batch-discount-value text-end" value="${formatInput2(discountValue, true)}"></td>
-                    <td><input type="number" step="0.01" min="0" class="form-control batch-gst-percentage text-end" value="${gstPercentage.toFixed(2)}"></td>
+                    <td class="text-end">
+                        <input type="hidden" class="batch-gst-percentage" value="${gstPercentage.toFixed(2)}">
+                        <strong>${gstPercentage.toFixed(2)}%</strong>
+                    </td>
                 </tr>
             `;
         });
@@ -1574,7 +1556,7 @@ function addOrUpdateSalesItem() {
 
     function renderSalesItems() {
         if (!salesItems || salesItems.length === 0) {
-            $('#itemsTableBody').html('<tr><td colspan="9" class="text-center text-muted">No items added.</td></tr>');
+            $('#itemsTableBody').html('<tr><td colspan="10" class="text-center text-muted">No items added.</td></tr>');
             return;
         }
 
@@ -1598,6 +1580,8 @@ function addOrUpdateSalesItem() {
             let qtyPerUnitValues = [];
             let sellingRateValues = [];
             let gstValues = [];
+            let discountTypeValues = [];
+            let discountValueValues = [];
 
             let batchNames = rows.map(r => {
                 let rowQty = parseFloat(r.qty || 0);
@@ -1611,6 +1595,8 @@ function addOrUpdateSalesItem() {
                 let rowQtyPerUnit = parseFloat(row.qty_per_unit || 0);
                 let rowSellingRate = parseFloat(row.selling_rate || 0);
                 let rowGst = parseFloat(row.gst_percentage || 0);
+                let rowDiscountType = parseInt(row.discount_type || 1);
+                let rowDiscountValue = parseFloat(row.discount_value || 0);
 
                 totalUnit += rowUnit;
                 totalQty += rowQty;
@@ -1628,11 +1614,21 @@ function addOrUpdateSalesItem() {
                 if (!gstValues.some(v => Math.abs(v - rowGst) < 0.01)) {
                     gstValues.push(rowGst);
                 }
+
+                if (!discountTypeValues.some(v => parseInt(v) === rowDiscountType)) {
+                    discountTypeValues.push(rowDiscountType);
+                }
+
+                if (!discountValueValues.some(v => Math.abs(v - rowDiscountValue) < 0.01)) {
+                    discountValueValues.push(rowDiscountValue);
+                }
             });
 
             let displayQtyPerUnit = qtyPerUnitValues.length === 1 ? qtyPerUnitValues[0].toFixed(2) : 'Mixed';
             let inputRate = sellingRateValues.length === 1 ? sellingRateValues[0] : '';
             let inputGst = gstValues.length === 1 ? gstValues[0] : '';
+            let inputDiscountType = discountTypeValues.length === 1 ? parseInt(discountTypeValues[0] || 1) : 1;
+            let inputDiscountValue = discountValueValues.length === 1 ? discountValueValues[0] : '';
 
             html += `
                 <tr data-product-id="${productId}">
@@ -1653,8 +1649,17 @@ function addOrUpdateSalesItem() {
                     <td class="text-end">
                         <input type="number" step="0.01" min="0" class="form-control form-control-sm text-end sales-inline-input inline-sales-item-input" data-product-id="${productId}" data-field="selling_rate" value="${inputRate === '' ? '' : roundMoney(inputRate).toFixed(2)}" placeholder="Mixed">
                     </td>
+                    <td class="text-end" style="min-width:145px;">
+                        <div class="input-group input-group-sm">
+                            <select class="form-select inline-sales-item-input" data-product-id="${productId}" data-field="discount_type">
+                                <option value="1" ${inputDiscountType === 1 ? 'selected' : ''}>%</option>
+                                <option value="2" ${inputDiscountType === 2 ? 'selected' : ''}>₹</option>
+                            </select>
+                            <input type="number" step="0.01" min="0" class="form-control text-end inline-sales-item-input" data-product-id="${productId}" data-field="discount_value" value="${inputDiscountValue === '' ? '' : roundMoney(inputDiscountValue).toFixed(2)}" placeholder="Mixed">
+                        </div>
+                    </td>
                     <td class="text-end">
-                        <input type="number" step="0.01" min="0" class="form-control form-control-sm text-end sales-inline-input inline-sales-item-input" data-product-id="${productId}" data-field="gst_percentage" value="${inputGst === '' ? '' : roundMoney(inputGst).toFixed(2)}" placeholder="Mixed">
+                        <strong>${inputGst === '' ? 'Mixed' : roundMoney(inputGst).toFixed(2) + '%'}</strong>
                         <div class="sales-inline-muted">${formatCurrency(lineTax)}</div>
                     </td>
                     <td class="text-end"><strong>${formatCurrency(lineTotal)}</strong></td>
@@ -1693,9 +1698,17 @@ function addOrUpdateSalesItem() {
                 item.selling_rate = roundMoney(numericValue);
                 syncInlineRateMarkup(item, item.selling_rate);
             });
-        } else if (field === 'gst_percentage') {
+        } else if (field === 'discount_type') {
+            let discountType = parseInt(value || 1);
+            if ($.inArray(discountType, [1, 2]) === -1) {
+                discountType = 1;
+            }
             $.each(rows, function (_, item) {
-                item.gst_percentage = roundMoney(numericValue);
+                item.discount_type = discountType;
+            });
+        } else if (field === 'discount_value') {
+            $.each(rows, function (_, item) {
+                item.discount_value = roundMoney(numericValue);
             });
         } else if (field === 'unit_qty') {
             let currentTotalUnit = 0;
@@ -1912,6 +1925,70 @@ function addOrUpdateSalesItem() {
         salesPayments = rows;
     }
 
+
+    function currentBaseGrandTotalWithoutRoundOff() {
+        let lineTotal = 0;
+        $.each(salesItems, function (_, item) {
+            let line = calculateItemLine(item);
+            lineTotal += line.total;
+        });
+        lineTotal = roundMoney(lineTotal);
+
+        let headerDiscountType = parseInt($('#headerDiscountType').val() || 1);
+        let headerDiscountValue = parseFloat($('#headerDiscountValue').val() || 0);
+        let headerDiscount = headerDiscountValue > 0
+            ? (headerDiscountType === 1 ? roundMoney(lineTotal * headerDiscountValue / 100) : roundMoney(headerDiscountValue))
+            : 0;
+
+        if (headerDiscount > lineTotal) {
+            headerDiscount = lineTotal;
+        }
+
+        let shippingCharges = roundMoney($('#shippingCharges').val() || 0);
+        return roundMoney(Math.max(lineTotal - headerDiscount + shippingCharges, 0));
+    }
+
+    function formatRoundOffValue(value) {
+        value = roundMoney(value || 0);
+        if (Math.abs(value) < 0.005) {
+            return '0.00';
+        }
+        return (value > 0 ? '+' : '') + value.toFixed(2);
+    }
+
+    function updateRoundOffButtonLabel() {
+        $('#roundOffToggleBtn').text(roundOffApplied ? 'Unround' : 'Round');
+    }
+
+    function clearRoundOffApplied() {
+        if (roundOffApplied) {
+            roundOffApplied = false;
+            $('#roundOff').val('0.00');
+            updateRoundOffButtonLabel();
+        }
+    }
+
+    function toggleRoundOff() {
+        if (roundOffApplied) {
+            roundOffApplied = false;
+            $('#roundOff').val('0.00');
+            updateRoundOffButtonLabel();
+            calculateSummary();
+            saveDraftToStorage();
+            return;
+        }
+
+        let baseTotal = currentBaseGrandTotalWithoutRoundOff();
+        let roundedTotal = Math.round(baseTotal);
+        let roundOff = roundMoney(roundedTotal - baseTotal);
+
+        roundOffApplied = true;
+        $('#roundOff').val(formatRoundOffValue(roundOff));
+        updateRoundOffButtonLabel();
+        calculateSummary();
+        saveDraftToStorage();
+    }
+
     function calculateSummary() {
         let subTotal = 0;
         let itemDiscount = 0;
@@ -1943,7 +2020,13 @@ function addOrUpdateSalesItem() {
 
         let shippingCharges = roundMoney($('#shippingCharges').val() || 0);
         let roundOff = roundMoney($('#roundOff').val() || 0);
-        let grandTotal = roundMoney(Math.max(lineTotal - headerDiscount + shippingCharges + roundOff, 0));
+        let baseGrandTotal = roundMoney(Math.max(lineTotal - headerDiscount + shippingCharges, 0));
+        let grandTotal = roundMoney(Math.max(baseGrandTotal + roundOff, 0));
+
+        if (!$('#roundOff').is(':focus')) {
+            $('#roundOff').val(formatRoundOffValue(roundOff));
+        }
+        updateRoundOffButtonLabel();
 
         syncPaymentsFromDom();
 
@@ -2013,7 +2096,8 @@ function addOrUpdateSalesItem() {
         }
 
         if (sourceType === targetType) {
-            showAppToast('warning', 'This document is already in selected type.');
+            // Same document type means this is only an update request.
+            saveSale({print_after_save: false});
             return;
         }
 
@@ -2061,7 +2145,7 @@ function addOrUpdateSalesItem() {
                      * After generate, automatically reload edit/update page.
                      */
                     if (savedId > 0) {
-                        redirectToSavedSaleEditPage(savedId, response);
+                        redirectToSavedSaleEditPage(savedId, response, 'Opening all sales list...');
                     }
                 } else {
                     handleApiError(response);
@@ -2161,11 +2245,11 @@ function addOrUpdateSalesItem() {
                             return;
                         }
 
-                        redirectToSavedSaleEditPage(savedId, response, 'Opening update page...');
+                        redirectToSavedSaleEditPage(savedId, response, 'Opening all sales list...');
                         return;
                     }
 
-                    showAppToast('error', 'Sale saved, but update URL was not received. Please open the sales list.');
+                    showAppToast('error', 'Sale saved, but all sales list URL was not received.');
                 } else {
                     handleApiError(response);
                 }
@@ -2217,9 +2301,14 @@ function addOrUpdateSalesItem() {
         return printWindow;
     }
 
-    function salesEditUrl(savedId, response) {
+    function allSalesListUrl(response) {
         let data = response && response.data ? response.data : {};
-        return data.redirect_url || data.edit_url || (window.BASE_URL + 'pages/sales.php?id=' + encodeURIComponent(savedId) + '&mode=edit');
+        return data.all_sales_list_url || data.redirect_url || (window.BASE_URL + 'pages/all-sales-list.php');
+    }
+
+    function salesEditUrl(savedId, response) {
+        // After save/update/generate, user requested to go back to All Sales List.
+        return allSalesListUrl(response);
     }
 
     function directPrintPdfInPopup(pdfUrl, editUrl) {
@@ -2317,11 +2406,11 @@ function addOrUpdateSalesItem() {
         }
 
         let data = response && response.data ? response.data : {};
-        let redirectUrl = data.redirect_url || data.edit_url || (window.BASE_URL + 'pages/sales.php?id=' + savedId + '&mode=edit');
+        let redirectUrl = allSalesListUrl(response);
 
         $('#saleId').val(savedId);
         $('#documentModeText').text('Saved: ' + (data.sales_no || ''));
-        setButtonLoading('saveSaleBtn', loadingText || 'Opening update page...');
+        setButtonLoading('saveSaleBtn', loadingText || 'Opening all sales list...');
 
         setTimeout(function () {
             window.location.href = redirectUrl;
@@ -2549,7 +2638,8 @@ function addOrUpdateSalesItem() {
         $('#shippingCharges').val(payload.shipping_charges || '0');
         $('#headerDiscountType').val(payload.discount_type || '1');
         $('#headerDiscountValue').val(payload.discount_value || '0');
-        $('#roundOff').val(payload.round_off || '0');
+        $('#roundOff').val(formatRoundOffValue(roundMoney(payload.round_off || 0)));
+        roundOffApplied = Math.abs(roundMoney(payload.round_off || 0)) > 0.0001;
 
         salesItems = Array.isArray(payload.items) ? payload.items : [];
         salesPayments = Array.isArray(payload.payments) ? payload.payments : [];
@@ -2581,7 +2671,8 @@ function addOrUpdateSalesItem() {
         $('#shippingCharges').val('0');
         $('#headerDiscountType').val('1');
         $('#headerDiscountValue').val('0');
-        $('#roundOff').val('0');
+        $('#roundOff').val('0.00');
+        roundOffApplied = false;
 
         selectedCustomer = null;
         selectedProduct = null;
@@ -2886,7 +2977,11 @@ function addOrUpdateSalesItem() {
     }
 
     function roundMoney(value) {
-        return Math.round((parseFloat(value || 0) + Number.EPSILON) * 100) / 100;
+        let numberValue = parseFloat(value || 0);
+        if (isNaN(numberValue) || !isFinite(numberValue)) {
+            numberValue = 0;
+        }
+        return Math.round((numberValue + Number.EPSILON) * 100) / 100;
     }
 
     function roundQty(value) {

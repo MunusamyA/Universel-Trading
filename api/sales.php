@@ -2602,18 +2602,22 @@ function saveSale(PDO $pdo)
         }
 
         if ($targetType === $sourceType) {
-            jsonResponse(false, 'This document is already in selected document type.');
-        }
+            // Same selected document type means update the existing document, not generate.
+            $documentType = $sourceType;
+            $saleId = $sourceSaleId;
+            $isConvertMode = false;
+            $mode = 'edit';
+        } else {
+            // Convert / Generate must UPDATE the same sales row.
+            $documentType = $targetType;
+            $saleId = $sourceSaleId;
 
-        // Convert / Generate must UPDATE the same sales row.
-        $documentType = $targetType;
-        $saleId = $sourceSaleId;
-
-        if (!canGenerateSourceToTarget($sourceType, $targetType)) {
-            jsonResponse(
-                false,
-                'You do not have permission to generate this document. Required permission: source document generate action. Check ' . generatePermissionTextForTarget($targetType) . '.'
-            );
+            if (!canGenerateSourceToTarget($sourceType, $targetType)) {
+                jsonResponse(
+                    false,
+                    'You do not have permission to generate this document. Required permission: source document generate action. Check ' . generatePermissionTextForTarget($targetType) . '.'
+                );
+            }
         }
     }
 
@@ -3012,6 +3016,7 @@ function saveSale(PDO $pdo)
         $pdo->commit();
 
         $editUrl = BASE_URL . 'pages/sales.php?id=' . (int)$saleId . '&mode=edit';
+        $allSalesListUrl = BASE_URL . 'pages/all-sales-list.php';
 
         jsonOk($isConvertMode ? 'Document updated successfully. No duplicate created.' : 'Sale saved successfully.', [
             'id' => $saleId,
@@ -3021,7 +3026,8 @@ function saveSale(PDO $pdo)
             'paid_amount' => round2($paidAmount),
             'due_amount' => $dueAmount,
             'edit_url' => $editUrl,
-            'redirect_url' => $editUrl,
+            'redirect_url' => $allSalesListUrl,
+            'all_sales_list_url' => $allSalesListUrl,
             'mode' => 'edit',
             'sale' => [
                 'id' => $saleId,

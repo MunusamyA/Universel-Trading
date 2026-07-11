@@ -332,8 +332,9 @@ $(document).ready(function () {
 
     function renderSummary(summary) {
         $('#openingDue').text(numberFormat(summary.opening_due || 0));
-        $('#purchaseDue').text(numberFormat(summary.purchase_due || 0));
+        $('#purchaseTotal').text(numberFormat(summary.purchase_total || 0));
         $('#purchasePaid').text(numberFormat(summary.purchase_paid || 0));
+        $('#purchaseDue').text(numberFormat(summary.purchase_due || 0));
         $('#totalPayable').text(numberFormat(summary.total_payable || 0));
     }
 

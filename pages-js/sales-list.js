@@ -211,7 +211,7 @@ $(document).ready(function () {
 
             html += '<tr>';
             html += '<td>' + (index + 1) + '</td>';
-            html += '<td><strong>' + escapeHtml(row.sales_no || '') + '</strong><br><span class="badge bg-soft-primary text-primary">' + escapeHtml(documentLabel(docType)) + '</span></td>';
+            html += '<td><strong>' + escapeHtml(row.sales_no || '') + '</strong><br><span class="badge bg-soft-primary text-primary">' + escapeHtml(documentShortLabel(docType)) + '</span></td>';
             html += '<td>' + formatDate(row.sales_date) + '</td>';
             html += '<td><strong>' + escapeHtml(row.customer_name || '') + '</strong><br><small class="text-muted">' + escapeHtml(row.customer_mobile || '') + '</small></td>';
             html += '<td class="text-end">' + formatCurrency(row.sub_total || 0) + '</td>';
@@ -320,7 +320,7 @@ $(document).ready(function () {
         }
 
         if (row.can_print || docPermission(docType, 'print')) {
-            html += '<a class="btn btn-outline-danger" target="_blank" href="' + window.BASE_URL + 'pages/sales-print.php?id=' + id + '&print=1" title="Print PDF"><i class="mdi mdi-file-pdf-box"></i></a>';
+            html += '<a class="btn btn-outline-danger" target="_blank" href="' + window.BASE_URL + 'api/sales-print.php?id=' + id + '&document_type=' + docType + '" title="Print PDF"><i class="mdi mdi-file-pdf-box"></i></a>';
         }
 
         if (!closed && (row.can_cancel || docPermission(docType, 'cancel'))) {
@@ -337,21 +337,21 @@ $(document).ready(function () {
                     target_type: 2,
                     title: 'Generate Proforma Bill',
                     btn: 'btn-outline-info',
-                    icon: 'mdi-file-document-plus-outline',
+                    label: 'PF',
                     actions: ['generate_proforma_bill']
                 },
                 {
                     target_type: 3,
                     title: 'Generate Sales Bill',
                     btn: 'btn-outline-success',
-                    icon: 'mdi-receipt-text-plus-outline',
+                    label: 'SB',
                     actions: ['generate_sales_bill']
                 },
                 {
                     target_type: 5,
                     title: 'Generate Final Invoice',
                     btn: 'btn-warning',
-                    icon: 'mdi-receipt-text-check-outline',
+                    label: 'FI',
                     actions: ['generate_invoice']
                 }
             ];
@@ -362,7 +362,7 @@ $(document).ready(function () {
                 }
 
                 if (canGenerateToTarget(docType, target.target_type, target.actions)) {
-                    html += convertButton(id, docType, target.target_type, target.btn, target.icon, target.title);
+                    html += convertButton(id, docType, target.target_type, target.btn, target.label, target.title);
                 }
             });
         }
@@ -376,8 +376,8 @@ $(document).ready(function () {
         return html;
     }
 
-    function convertButton(id, sourceType, targetType, btnClass, iconClass, title) {
-        return '<button type="button" class="btn ' + btnClass + ' convert-doc-btn" data-id="' + id + '" data-source-type="' + sourceType + '" data-target-type="' + targetType + '" title="' + title + '"><i class="mdi ' + iconClass + '"></i></button>';
+    function convertButton(id, sourceType, targetType, btnClass, label, title) {
+        return '<button type="button" class="btn ' + btnClass + ' convert-doc-btn fw-bold" data-id="' + id + '" data-source-type="' + sourceType + '" data-target-type="' + targetType + '" title="' + title + '">' + escapeHtml(label || '') + '</button>';
     }
 
     function allowedGenerateTargetsForSource(sourceType) {
@@ -574,6 +574,16 @@ $(document).ready(function () {
         }
 
         return false;
+    }
+
+    function documentShortLabel(typeId) {
+        typeId = parseInt(typeId || 0);
+        if (typeId === 1) return 'QT';
+        if (typeId === 2) return 'PF';
+        if (typeId === 3) return 'SB';
+        if (typeId === 4) return 'DS';
+        if (typeId === 5) return 'FI';
+        return documentLabel(typeId);
     }
 
     function documentLabel(typeId) {

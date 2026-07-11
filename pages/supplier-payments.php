@@ -61,7 +61,7 @@ $page_title = 'Supplier Payments | Universal ERP';
                 </div>
 
                 <div class="row">
-                    <div class="col-md-6 col-xl-3">
+                    <div class="col-md-6 col-xl">
                         <div class="card text-center">
                             <div class="card-body text-muted">
                                 <h3 class="text-primary" id="openingDue">0.00</h3>
@@ -70,25 +70,34 @@ $page_title = 'Supplier Payments | Universal ERP';
                         </div>
                     </div>
 
-                    <div class="col-md-6 col-xl-3">
+                    <div class="col-md-6 col-xl">
                         <div class="card text-center">
                             <div class="card-body text-muted">
-                                <h3 class="text-danger" id="purchaseDue">0.00</h3>
-                                Purchase Due
+                                <h3 class="text-secondary" id="purchaseTotal">0.00</h3>
+                                Bill Amount
                             </div>
                         </div>
                     </div>
 
-                    <div class="col-md-6 col-xl-3">
+                    <div class="col-md-6 col-xl">
                         <div class="card text-center">
                             <div class="card-body text-muted">
                                 <h3 class="text-info" id="purchasePaid">0.00</h3>
-                                Purchase Paid
+                                Paid Amount
                             </div>
                         </div>
                     </div>
 
-                    <div class="col-md-6 col-xl-3">
+                    <div class="col-md-6 col-xl">
+                        <div class="card text-center">
+                            <div class="card-body text-muted">
+                                <h3 class="text-danger" id="purchaseDue">0.00</h3>
+                                Due Amount
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6 col-xl">
                         <div class="card text-center">
                             <div class="card-body text-muted">
                                 <h3 class="text-success" id="totalPayable">0.00</h3>

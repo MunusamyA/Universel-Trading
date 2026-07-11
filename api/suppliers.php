@@ -125,8 +125,8 @@ function listSuppliers(PDO $pdo)
     $status = (int)($_GET['status'] ?? 0);
 
     $where = "
-        WHERE business_id = :business_id
-        AND branch_id = :branch_id
+        WHERE s.business_id = :business_id
+        AND s.branch_id = :branch_id
     ";
 
     $params = [
@@ -135,7 +135,7 @@ function listSuppliers(PDO $pdo)
     ];
 
     if ($status === 1 || $status === 2) {
-        $where .= " AND status = :status ";
+        $where .= " AND s.status = :status ";
         $params[':status'] = $status;
     }
 
@@ -148,15 +148,15 @@ function listSuppliers(PDO $pdo)
 
         $where .= "
             AND (
-                supplier_name LIKE :search_supplier_name
-                OR mobile LIKE :search_mobile
-                OR email LIKE :search_email
-                OR gst_number LIKE :search_gst_number
-                OR pan_number LIKE :search_pan_number
-                OR dl_number LIKE :search_dl_number
-                OR fl_number LIKE :search_fl_number
-                OR bank_name LIKE :search_bank_name
-                OR bank_account_no LIKE :search_bank_account_no
+                s.supplier_name LIKE :search_supplier_name
+                OR s.mobile LIKE :search_mobile
+                OR s.email LIKE :search_email
+                OR s.gst_number LIKE :search_gst_number
+                OR s.pan_number LIKE :search_pan_number
+                OR s.dl_number LIKE :search_dl_number
+                OR s.fl_number LIKE :search_fl_number
+                OR s.bank_name LIKE :search_bank_name
+                OR s.bank_account_no LIKE :search_bank_account_no
             )
         ";
 
@@ -174,33 +174,55 @@ function listSuppliers(PDO $pdo)
     }
 
     try {
+        $purchaseSummarySql = "
+            SELECT
+                supplier_id,
+                business_id,
+                branch_id,
+                COUNT(*) AS total_purchase_bills,
+                COALESCE(SUM(grand_total), 0) AS purchase_total,
+                COALESCE(SUM(paid_amount), 0) AS purchase_paid,
+                COALESCE(SUM(due_amount), 0) AS purchase_due
+            FROM purchases
+            WHERE status = 1
+            GROUP BY supplier_id, business_id, branch_id
+        ";
+
         $stmt = $pdo->prepare("
             SELECT
-                id,
-                supplier_name,
-                mobile,
-                email,
-                gst_number,
-                pan_number,
-                dl_number,
-                fl_number,
-                address,
-                city,
-                state,
-                pincode,
-                opening_outstanding,
-                current_outstanding,
-                bank_name,
-                bank_account_no,
-                bank_branch,
-                bank_ifsc,
-                upi_id,
-                status,
-                created_at,
-                updated_at
-            FROM suppliers
+                s.id,
+                s.supplier_name,
+                s.mobile,
+                s.email,
+                s.gst_number,
+                s.pan_number,
+                s.dl_number,
+                s.fl_number,
+                s.address,
+                s.city,
+                s.state,
+                s.pincode,
+                s.opening_outstanding,
+                s.current_outstanding,
+                s.bank_name,
+                s.bank_account_no,
+                s.bank_branch,
+                s.bank_ifsc,
+                s.upi_id,
+                s.status,
+                s.created_at,
+                s.updated_at,
+                COALESCE(ps.total_purchase_bills, 0) AS total_purchase_bills,
+                COALESCE(ps.purchase_total, 0) AS purchase_total,
+                COALESCE(ps.purchase_paid, 0) AS purchase_paid,
+                COALESCE(ps.purchase_due, 0) AS purchase_due
+            FROM suppliers s
+            LEFT JOIN ($purchaseSummarySql) ps
+                ON ps.supplier_id = s.id
+                AND ps.business_id = s.business_id
+                AND ps.branch_id = s.branch_id
             $where
-            ORDER BY id DESC
+            ORDER BY s.id DESC
         ");
 
         $stmt->execute($params);
@@ -209,24 +231,48 @@ function listSuppliers(PDO $pdo)
         $canEdit = supplierCan(4);
         $canDelete = supplierCan(5);
         $canSupplierPayment = supplierCan(17);
+        $canView = supplierCan(1) || supplierCan(2);
 
         foreach ($suppliers as &$supplier) {
+            $openingOutstanding = round((float)($supplier['opening_outstanding'] ?? 0), 2);
+            $purchaseTotal = round((float)($supplier['purchase_total'] ?? 0), 2);
+            $purchasePaid = round((float)($supplier['purchase_paid'] ?? 0), 2);
+            $purchaseDue = round((float)($supplier['purchase_due'] ?? 0), 2);
+            $totalDue = round($openingOutstanding + $purchaseDue, 2);
+
+            $supplier['total_purchase_bills'] = (int)($supplier['total_purchase_bills'] ?? 0);
+            $supplier['overall_bill_amount'] = $purchaseTotal;
+            $supplier['overall_paid_amount'] = $purchasePaid;
+            $supplier['overall_due_amount'] = $totalDue;
+            $supplier['purchase_total'] = $purchaseTotal;
+            $supplier['purchase_paid'] = $purchasePaid;
+            $supplier['purchase_due'] = $purchaseDue;
+            $supplier['total_due'] = $totalDue;
+            $supplier['current_outstanding'] = $totalDue;
+
             $supplier['can_edit'] = $canEdit;
             $supplier['can_delete'] = $canDelete;
-            $supplier['can_view'] = supplierCan(1) || supplierCan(2);
-        $supplier['can_supplier_payment'] = $canSupplierPayment;
+            $supplier['can_view'] = $canView;
+            $supplier['can_supplier_payment'] = $canSupplierPayment;
         }
         unset($supplier);
 
         $statsStmt = $pdo->prepare("
             SELECT
-                COUNT(*) AS total_suppliers,
-                SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS active_suppliers,
-                SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END) AS inactive_suppliers,
-                COALESCE(SUM(current_outstanding), 0) AS total_outstanding
-            FROM suppliers
-            WHERE business_id = :business_id
-            AND branch_id = :branch_id
+                COUNT(s.id) AS total_suppliers,
+                SUM(CASE WHEN s.status = 1 THEN 1 ELSE 0 END) AS active_suppliers,
+                SUM(CASE WHEN s.status = 2 THEN 1 ELSE 0 END) AS inactive_suppliers,
+                COALESCE(SUM(COALESCE(ps.purchase_total, 0)), 0) AS total_bill_amount,
+                COALESCE(SUM(COALESCE(ps.purchase_paid, 0)), 0) AS total_paid_amount,
+                COALESCE(SUM(COALESCE(s.opening_outstanding, 0) + COALESCE(ps.purchase_due, 0)), 0) AS total_due_amount,
+                COALESCE(SUM(COALESCE(s.opening_outstanding, 0) + COALESCE(ps.purchase_due, 0)), 0) AS total_outstanding
+            FROM suppliers s
+            LEFT JOIN ($purchaseSummarySql) ps
+                ON ps.supplier_id = s.id
+                AND ps.business_id = s.business_id
+                AND ps.branch_id = s.branch_id
+            WHERE s.business_id = :business_id
+            AND s.branch_id = :branch_id
         ");
 
         $statsStmt->execute([
@@ -234,11 +280,11 @@ function listSuppliers(PDO $pdo)
             ':branch_id' => $scope['branch_id']
         ]);
 
-        $stats = $statsStmt->fetch(PDO::FETCH_ASSOC);
+        $stats = $statsStmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
         jsonResponse(true, 'Suppliers loaded.', [
             'suppliers' => $suppliers,
-            'stats' => $stats ?: []
+            'stats' => $stats
         ]);
 
     } catch (Exception $e) {

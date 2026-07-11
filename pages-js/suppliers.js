@@ -201,13 +201,13 @@ $(document).ready(function () {
                     applyPageContext();
                     loadSuppliers();
                 } else {
-                    $('#supplierTableBody').html('<tr><td colspan="9" class="text-center text-danger">' + escapeHtml(response.message || 'Permission denied.') + '</td></tr>');
+                    $('#supplierTableBody').html('<tr><td colspan="11" class="text-center text-danger">' + escapeHtml(response.message || 'Permission denied.') + '</td></tr>');
                     $('#addSupplierBtn').addClass('d-none');
                 }
             },
             error: function (xhr) {
                 console.log(xhr.responseText);
-                $('#supplierTableBody').html('<tr><td colspan="9" class="text-center text-danger">Server error.</td></tr>');
+                $('#supplierTableBody').html('<tr><td colspan="11" class="text-center text-danger">Server error.</td></tr>');
                 $('#addSupplierBtn').addClass('d-none');
             }
         });
@@ -227,11 +227,11 @@ $(document).ready(function () {
 
     function loadSuppliers() {
         if (!pageContext.can_view && !pageContext.can_list) {
-            $('#supplierTableBody').html('<tr><td colspan="9" class="text-center text-danger">Permission denied.</td></tr>');
+            $('#supplierTableBody').html('<tr><td colspan="11" class="text-center text-danger">Permission denied.</td></tr>');
             return;
         }
 
-        $('#supplierTableBody').html('<tr><td colspan="9" class="text-center text-muted">Loading...</td></tr>');
+        $('#supplierTableBody').html('<tr><td colspan="11" class="text-center text-muted">Loading...</td></tr>');
 
         $.ajax({
             url: window.BASE_URL + 'api/' + window.MASTER_FILE + '.php',
@@ -247,19 +247,19 @@ $(document).ready(function () {
                     renderSupplierRows(response.data.suppliers || []);
                     renderStats(response.data.stats || {});
                 } else {
-                    $('#supplierTableBody').html('<tr><td colspan="9" class="text-center text-danger">' + escapeHtml(response.message || 'Unable to load suppliers.') + '</td></tr>');
+                    $('#supplierTableBody').html('<tr><td colspan="11" class="text-center text-danger">' + escapeHtml(response.message || 'Unable to load suppliers.') + '</td></tr>');
                 }
             },
             error: function (xhr) {
                 console.log(xhr.responseText);
-                $('#supplierTableBody').html('<tr><td colspan="9" class="text-center text-danger">Server error.</td></tr>');
+                $('#supplierTableBody').html('<tr><td colspan="11" class="text-center text-danger">Server error.</td></tr>');
             }
         });
     }
 
     function renderSupplierRows(suppliers) {
         if (!suppliers || suppliers.length === 0) {
-            $('#supplierTableBody').html('<tr><td colspan="9" class="text-center text-muted">No suppliers found.</td></tr>');
+            $('#supplierTableBody').html('<tr><td colspan="11" class="text-center text-muted">No suppliers found.</td></tr>');
             return;
         }
 
@@ -310,7 +310,9 @@ $(document).ready(function () {
             html += '<div>' + escapeHtml(supplier.bank_name || '-') + '</div>';
             html += '<small class="text-muted">' + escapeHtml(supplier.bank_ifsc || '') + '</small>';
             html += '</td>';
-            html += '<td><strong>' + formatCurrency(supplier.current_outstanding) + '</strong></td>';
+            html += '<td class="text-end"><strong>' + formatCurrency(supplier.overall_bill_amount || supplier.purchase_total || 0) + '</strong><br><small class="text-muted">Bills: ' + escapeHtml(supplier.total_purchase_bills || 0) + '</small></td>';
+            html += '<td class="text-end"><strong class="text-success">' + formatCurrency(supplier.overall_paid_amount || supplier.purchase_paid || 0) + '</strong></td>';
+            html += '<td class="text-end"><strong class="text-danger">' + formatCurrency(supplier.overall_due_amount || supplier.total_due || supplier.current_outstanding || 0) + '</strong></td>';
             html += '<td>' + statusBadge(supplier.status) + '</td>';
             html += '<td>' + actionHtml + '</td>';
             html += '</tr>';
@@ -392,9 +394,9 @@ $(document).ready(function () {
 
     function renderStats(stats) {
         $('#totalSuppliersCount').text(stats.total_suppliers || 0);
-        $('#activeSuppliersCount').text(stats.active_suppliers || 0);
-        $('#inactiveSuppliersCount').text(stats.inactive_suppliers || 0);
-        $('#totalOutstandingAmount').text(formatCurrency(stats.total_outstanding || 0));
+        $('#totalBillAmount').text(formatCurrency(stats.total_bill_amount || 0));
+        $('#totalPaidAmount').text(formatCurrency(stats.total_paid_amount || 0));
+        $('#totalDueAmount').text(formatCurrency(stats.total_due_amount || stats.total_outstanding || 0));
     }
 
     function formatAddress(supplier) {

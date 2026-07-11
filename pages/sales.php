@@ -234,7 +234,7 @@ $salesPageConfig = [
                         <div class="page-title-box d-flex align-items-center justify-content-between">
                             <h4 class="mb-0">Sales Entry</h4>
                             <div class="page-title-right">
-                                <a href="<?= BASE_URL; ?>pages/sales-list.php" class="btn btn-light d-none" id="salesListNavBtn">
+                                <a href="<?= BASE_URL; ?>pages/all-sales-list.php" class="btn btn-light d-none" id="salesListNavBtn">
                                     <i class="mdi mdi-format-list-bulleted me-1"></i> Sales List
                                 </a>
                                 <button type="button" class="btn btn-warning d-none" id="holdBillBtn">
@@ -381,6 +381,7 @@ $salesPageConfig = [
                                             <th class="text-end">Qty/Unit</th>
                                             <th class="text-end">Total Qty</th>
                                             <th class="text-end">Rate</th>
+                                            <th class="text-end">Discount</th>
                                             <th class="text-end">GST</th>
                                             <th class="text-end">Total</th>
                                             <th width="80">Action</th>
@@ -388,7 +389,7 @@ $salesPageConfig = [
                                     </thead>
                                     <tbody id="itemsTableBody">
                                         <tr>
-                                            <td colspan="9" class="text-center text-muted">No items added.</td>
+                                            <td colspan="10" class="text-center text-muted">No items added.</td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -458,7 +459,10 @@ $salesPageConfig = [
                                             <span class="text-muted">Round Off</span>
                                         </div>
                                         <div class="col-6">
-                                            <input type="number" step="0.01" class="form-control form-control-sm" id="roundOff" value="0">
+                                            <div class="input-group input-group-sm">
+                                                <input type="text" class="form-control text-end" id="roundOff" value="0.00" inputmode="decimal" autocomplete="off">
+                                                <button type="button" class="btn btn-outline-primary" id="roundOffToggleBtn">Round</button>
+                                            </div>
                                         </div>
                                     </div>
 
@@ -545,7 +549,7 @@ $salesPageConfig = [
                                 <th class="text-end" style="min-width:95px;">Rate</th>
                                 <th style="min-width:90px;">Disc Type</th>
                                 <th class="text-end" style="min-width:95px;">Disc Value</th>
-                                <th class="text-end" style="min-width:80px;">GST %</th>
+                                <th class="text-end" style="min-width:90px;">GST</th>
                             </tr>
                         </thead>
                         <tbody id="selectedBatchDetailsBody">
@@ -555,7 +559,7 @@ $salesPageConfig = [
                         </tbody>
                     </table>
                 </div>
-                <small class="text-muted d-block mt-1">Each batch has separate Unit Qty, Price Type, Discount and GST. For secondary-unit products, Qty/Unit is auto-filled from product master.</small>
+                <small class="text-muted d-block mt-1">Each batch has separate Unit Qty, Price Type and Discount. GST is auto-filled from product / HSN / purchase batch and cannot be edited.</small>
             </div>
 
             <div class="modal-footer py-2">
