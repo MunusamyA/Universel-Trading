@@ -1614,6 +1614,7 @@ function paymentPageInit(PDO $pdo)
     $data = [
         'payment_modes' => [],
         'customers' => [],
+        'overall_summary' => [],
         'selected_customer' => null,
         'selected_sale' => null,
         'payments' => []
@@ -1632,6 +1633,28 @@ function paymentPageInit(PDO $pdo)
         ':branch_id' => $scope['branch_id']
     ]);
     $data['payment_modes'] = $modes->fetchAll(PDO::FETCH_ASSOC);
+
+    $customersStmt = $pdo->prepare("
+        SELECT
+            id,
+            customer_name,
+            mobile,
+            COALESCE(opening_due, opening_outstanding, opening_balance, 0) AS opening_due,
+            COALESCE(current_outstanding, total_outstanding, 0) AS current_outstanding
+        FROM customers
+        WHERE business_id = :business_id
+        AND branch_id = :branch_id
+        AND status = 1
+        ORDER BY customer_name ASC
+        LIMIT 1000
+    "
+    );
+    $customersStmt->execute([
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id']
+    ]);
+    $data['customers'] = $customersStmt->fetchAll(PDO::FETCH_ASSOC);
+    $data['overall_summary'] = getCustomerPaymentOverallSummary($pdo, $scope);
 
     if ($salesId > 0) {
         $saleStmt = $pdo->prepare("
@@ -1673,6 +1696,7 @@ function listCustomerPayments(PDO $pdo)
 
     $scope = getScope();
     $customerId = (int)($_GET['customer_id'] ?? 0);
+    $salesId = (int)($_GET['sales_id'] ?? 0);
     $search = cleanInput($_GET['search'] ?? '');
 
     $where = "WHERE cp.business_id = :business_id AND cp.branch_id = :branch_id";
@@ -1684,6 +1708,11 @@ function listCustomerPayments(PDO $pdo)
     if ($customerId > 0) {
         $where .= " AND cp.customer_id = :customer_id";
         $params[':customer_id'] = $customerId;
+    }
+
+    if ($salesId > 0) {
+        $where .= " AND cp.sales_id = :sales_id";
+        $params[':sales_id'] = $salesId;
     }
 
     if ($search !== '') {
@@ -2164,16 +2193,24 @@ function getCustomerPaymentSnapshot(PDO $pdo, array $scope, $customerId)
             COALESCE(c.opening_balance, c.opening_outstanding, 0) AS opening_balance,
             COALESCE(c.opening_paid, 0) AS opening_paid,
             COALESCE(c.opening_due, c.opening_outstanding, 0) AS opening_due,
-            COALESCE((
-                SELECT SUM(due_amount)
-                FROM sales
-                WHERE business_id = :business_id
-                AND branch_id = :branch_id
-                AND customer_id = :customer_id
-                AND status IN (1,2)
-            ), 0) AS sales_due,
+            COALESCE(sales_summary.sales_total, 0) AS sales_total,
+            COALESCE(sales_summary.sales_paid, 0) AS sales_paid,
+            COALESCE(sales_summary.sales_due, 0) AS sales_due,
             COALESCE(c.current_outstanding, c.total_outstanding, 0) AS total_outstanding
         FROM customers c
+        LEFT JOIN (
+            SELECT
+                customer_id,
+                SUM(grand_total) AS sales_total,
+                SUM(paid_amount) AS sales_paid,
+                SUM(due_amount) AS sales_due
+            FROM sales
+            WHERE business_id = :business_id
+            AND branch_id = :branch_id
+            AND customer_id = :customer_id
+            AND status IN (1,2)
+            GROUP BY customer_id
+        ) sales_summary ON sales_summary.customer_id = c.id
         WHERE c.id = :customer_id2
         AND c.business_id = :business_id2
         AND c.branch_id = :branch_id2
@@ -2188,7 +2225,71 @@ function getCustomerPaymentSnapshot(PDO $pdo, array $scope, $customerId)
         ':branch_id2' => $scope['branch_id']
     ]);
 
-    return $stmt->fetch(PDO::FETCH_ASSOC);
+    $customer = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$customer) {
+        return false;
+    }
+
+    $openingDue = round2($customer['opening_due'] ?? 0);
+    $salesTotal = round2($customer['sales_total'] ?? 0);
+    $salesPaid = round2($customer['sales_paid'] ?? 0);
+    $salesDue = round2($customer['sales_due'] ?? 0);
+
+    $customer['opening_due'] = $openingDue;
+    $customer['sales_total'] = $salesTotal;
+    $customer['sales_paid'] = $salesPaid;
+    $customer['sales_due'] = $salesDue;
+    $customer['total_receivable'] = round2($openingDue + $salesDue);
+    $customer['total_pending'] = round2($openingDue + $salesDue);
+
+    return $customer;
+}
+
+
+function getCustomerPaymentOverallSummary(PDO $pdo, array $scope)
+{
+    $openingStmt = $pdo->prepare("
+        SELECT
+            COALESCE(SUM(COALESCE(opening_due, opening_outstanding, opening_balance, 0)), 0) AS opening_due
+        FROM customers
+        WHERE business_id = :business_id
+        AND branch_id = :branch_id
+        AND status = 1
+    ");
+    $openingStmt->execute([
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id']
+    ]);
+    $openingDue = round2($openingStmt->fetchColumn() ?: 0);
+
+    $salesStmt = $pdo->prepare("
+        SELECT
+            COALESCE(SUM(grand_total), 0) AS sales_total,
+            COALESCE(SUM(paid_amount), 0) AS sales_paid,
+            COALESCE(SUM(due_amount), 0) AS sales_due
+        FROM sales
+        WHERE business_id = :business_id
+        AND branch_id = :branch_id
+        AND status IN (1,2)
+    ");
+    $salesStmt->execute([
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id']
+    ]);
+    $sales = $salesStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    $salesTotal = round2($sales['sales_total'] ?? 0);
+    $salesPaid = round2($sales['sales_paid'] ?? 0);
+    $salesDue = round2($sales['sales_due'] ?? 0);
+
+    return [
+        'opening_due' => $openingDue,
+        'sales_total' => $salesTotal,
+        'sales_paid' => $salesPaid,
+        'sales_due' => $salesDue,
+        'total_receivable' => round2($openingDue + $salesDue),
+        'total_pending' => round2($openingDue + $salesDue)
+    ];
 }
 
 function fetchCustomerPaymentRows(PDO $pdo, array $scope, $customerId, $limit = 100)
@@ -2270,25 +2371,11 @@ function applyCustomerPaymentAllocation(PDO $pdo, array $scope, $paymentId, $cus
         return;
     }
 
-    if ($paymentType === 3 || $paymentType === 2) {
-        $customer = getCustomerForPaymentUpdate($pdo, $scope, $customerId);
-        $openingDue = round2($customer['opening_due'] ?? $customer['opening_outstanding'] ?? 0);
-
-        if ($openingDue > 0 && $remaining > 0) {
-            $payOpening = min($openingDue, $remaining);
-            allocateToOpeningBalance($pdo, $scope, $paymentId, $customerId, $payOpening);
-            $remaining = round2($remaining - $payOpening);
-        }
-
-        if ($paymentType === 3) {
-            if ($remaining > 0.01) {
-                throw new Exception('Payment amount cannot be greater than opening balance due.');
-            }
-            return;
-        }
-    }
-
-    if ($paymentType === 2 && $remaining > 0) {
+    if ($paymentType === 2) {
+        /*
+         * Match supplier payment logic:
+         * Overall payment must clear bill due first by FIFO, then opening due last.
+         */
         $stmt = $pdo->prepare("
             SELECT id, due_amount
             FROM sales
@@ -2306,8 +2393,7 @@ function applyCustomerPaymentAllocation(PDO $pdo, array $scope, $paymentId, $cus
             ':customer_id' => $customerId
         ]);
 
-        $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        foreach ($sales as $sale) {
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $sale) {
             if ($remaining <= 0) {
                 break;
             }
@@ -2321,10 +2407,25 @@ function applyCustomerPaymentAllocation(PDO $pdo, array $scope, $paymentId, $cus
             allocateToSale($pdo, $scope, $paymentId, $customerId, (int)$sale['id'], $apply);
             $remaining = round2($remaining - $apply);
         }
+    }
 
-        if ($remaining > 0.01) {
-            throw new Exception('Payment amount is greater than total customer due.');
+    if ($paymentType === 3 || ($paymentType === 2 && $remaining > 0)) {
+        $customer = getCustomerForPaymentUpdate($pdo, $scope, $customerId);
+        $openingDue = round2($customer['opening_due'] ?? $customer['opening_outstanding'] ?? $customer['opening_balance'] ?? 0);
+
+        if ($paymentType === 3 && $amount - $openingDue > 0.01) {
+            throw new Exception('Payment amount cannot be greater than opening balance due.');
         }
+
+        if ($openingDue > 0 && $remaining > 0) {
+            $payOpening = min($openingDue, $remaining);
+            allocateToOpeningBalance($pdo, $scope, $paymentId, $customerId, $payOpening);
+            $remaining = round2($remaining - $payOpening);
+        }
+    }
+
+    if ($remaining > 0.01) {
+        throw new Exception('Payment amount is greater than total customer due.');
     }
 }
 

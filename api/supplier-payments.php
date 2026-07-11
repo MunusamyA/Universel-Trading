@@ -216,7 +216,8 @@ function spGetSuppliers(PDO $pdo)
     ]);
 
     jsonResponse(true, 'Suppliers loaded.', [
-        'suppliers' => $stmt->fetchAll(PDO::FETCH_ASSOC)
+        'suppliers' => $stmt->fetchAll(PDO::FETCH_ASSOC),
+        'overall_summary' => spCalculateSupplierOverallBalance($pdo, $scope)
     ]);
 }
 
@@ -1051,6 +1052,73 @@ function spRecalcPurchase(PDO $pdo, array $scope, $purchaseId)
         ':business_id' => $scope['business_id'],
         ':branch_id' => $scope['branch_id']
     ]);
+}
+
+
+function spCalculateSupplierOverallBalance(PDO $pdo, array $scope)
+{
+    $openingStmt = $pdo->prepare("
+        SELECT COALESCE(SUM(opening_outstanding), 0)
+        FROM suppliers
+        WHERE business_id = :business_id
+        AND branch_id = :branch_id
+        AND status = 1
+    ");
+    $openingStmt->execute([
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id']
+    ]);
+    $openingOutstanding = round((float)$openingStmt->fetchColumn(), 2);
+
+    $openingPaidStmt = $pdo->prepare("
+        SELECT COALESCE(SUM(amount), 0)
+        FROM supplier_payment_allocations
+        WHERE business_id = :business_id
+        AND branch_id = :branch_id
+        AND allocation_type = 2
+        AND status = 1
+    ");
+    $openingPaidStmt->execute([
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id']
+    ]);
+    $openingPaid = round((float)$openingPaidStmt->fetchColumn(), 2);
+    $openingDue = max(0, round($openingOutstanding - $openingPaid, 2));
+
+    $purchaseStmt = $pdo->prepare("
+        SELECT
+            COALESCE(SUM(grand_total), 0) AS purchase_total,
+            COALESCE(SUM(paid_amount), 0) AS purchase_paid,
+            COALESCE(SUM(due_amount), 0) AS purchase_due
+        FROM purchases
+        WHERE business_id = :business_id
+        AND branch_id = :branch_id
+        AND status = 1
+    ");
+    $purchaseStmt->execute([
+        ':business_id' => $scope['business_id'],
+        ':branch_id' => $scope['branch_id']
+    ]);
+    $purchase = $purchaseStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    $purchaseTotal = round((float)($purchase['purchase_total'] ?? 0), 2);
+    $purchasePaid = round((float)($purchase['purchase_paid'] ?? 0), 2);
+    $purchaseDue = round((float)($purchase['purchase_due'] ?? 0), 2);
+    $totalPayable = round($openingDue + $purchaseDue, 2);
+
+    return [
+        'opening_outstanding' => $openingOutstanding,
+        'opening_paid' => $openingPaid,
+        'opening_due' => $openingDue,
+        'purchase_total' => $purchaseTotal,
+        'bill_amount' => $purchaseTotal,
+        'purchase_paid' => $purchasePaid,
+        'paid_amount' => $purchasePaid,
+        'purchase_due' => $purchaseDue,
+        'due_amount' => $totalPayable,
+        'total_payable' => $totalPayable,
+        'total_pending' => $totalPayable
+    ];
 }
 
 function spCalculateSupplierBalance(PDO $pdo, array $scope, $supplierId)

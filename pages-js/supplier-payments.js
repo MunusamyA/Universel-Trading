@@ -3,6 +3,7 @@ $(document).ready(function () {
 
     let paymentModes = [];
     let suppliers = [];
+    let supplierOverallSummary = {};
     let pendingPurchases = [];
     let paymentSplits = [];
     let supplierSummary = {};
@@ -27,6 +28,31 @@ $(document).ready(function () {
     };
 
     loadPageContext();
+
+    $('#supplierSearchInput').on('input keyup', function () {
+        $('#supplier_id').val('');
+        renderSupplierOptions(0, true);
+    });
+
+    $('#supplierSearchInput').on('focus', function () {
+        renderSupplierOptions(parseInt($('#supplier_id').val() || 0), true);
+    });
+
+    $('#clearSupplierSearchBtn').on('click', function () {
+        clearSupplierSearch();
+    });
+
+    $(document).on('mousedown', '.supplier-search-option', function (e) {
+        e.preventDefault();
+        let supplierId = parseInt($(this).data('id') || 0);
+        selectSupplierForPayment(supplierId, true);
+    });
+
+    $(document).on('click', function (e) {
+        if ($(e.target).closest('#supplierSearchBox').length === 0) {
+            $('#supplierDropdown').addClass('d-none');
+        }
+    });
 
     $('#supplier_id').on('change', function () {
         isEditMode = false;
@@ -222,17 +248,19 @@ $(document).ready(function () {
             dataType: 'json',
             data: { action: 'get_suppliers' },
             success: function (response) {
-                let html = '<option value="">Select Supplier</option>';
                 if (response.status === true) {
                     suppliers = response.data.suppliers || [];
-                    $.each(suppliers, function (_, supplier) {
-                        let selected = parseInt(supplier.id) === parseInt(window.PRE_SUPPLIER_ID || 0) ? 'selected' : '';
-                        html += `<option value="${supplier.id}" ${selected}>${escapeHtml(supplier.supplier_name || '')}</option>`;
-                    });
+                    supplierOverallSummary = response.data.overall_summary || supplierOverallSummary || {};
                 }
-                $('#supplier_id').html(html);
 
-                if (parseInt(window.PRE_SUPPLIER_ID || 0) > 0) {
+                let preSupplierId = parseInt(window.PRE_SUPPLIER_ID || $('#supplier_id').val() || 0);
+                renderSupplierOptions(preSupplierId, false);
+                if (preSupplierId > 0) {
+                    $('#supplier_id').val(preSupplierId);
+                    setSupplierInputText(findSupplierById(preSupplierId));
+                }
+
+                if (preSupplierId > 0) {
                     loadSupplierData(function () {
                         if (parseInt(window.PRE_PURCHASE_ID || 0) > 0) {
                             $('#payment_type').val('2');
@@ -242,6 +270,7 @@ $(document).ready(function () {
                         applyPaymentTypeRules(true);
                     });
                 } else {
+                    renderSummary(supplierOverallSummary);
                     applyPaymentTypeRules(true);
                     loadPayments();
                 }
@@ -249,6 +278,98 @@ $(document).ready(function () {
             error: function (xhr) {
                 console.log(xhr.responseText);
             }
+        });
+    }
+
+    function supplierDisplayLabel(supplier) {
+        if (!supplier) {
+            return '';
+        }
+
+        let label = supplier.supplier_name || 'Supplier';
+        if (supplier.mobile) {
+            label += ' - ' + supplier.mobile;
+        }
+        return label;
+    }
+
+    function findSupplierById(supplierId) {
+        supplierId = parseInt(supplierId || 0);
+        return (suppliers || []).find(function (supplier) {
+            return parseInt(supplier.id || 0) === supplierId;
+        }) || null;
+    }
+
+    function setSupplierInputText(supplier) {
+        $('#supplierSearchInput').val(supplierDisplayLabel(supplier));
+    }
+
+    function clearSupplierSearch() {
+        selectSupplierForPayment(0, true);
+        $('#supplierSearchInput').blur();
+        $('#supplierDropdown').addClass('d-none').empty();
+    }
+
+    function renderSupplierOptions(selectedId, forceShow) {
+        selectedId = parseInt(selectedId || 0);
+        let searchText = ($('#supplierSearchInput').val() || '').toLowerCase().trim();
+        let html = '';
+        let shown = 0;
+
+        $.each(suppliers || [], function (_, supplier) {
+            let supplierId = parseInt(supplier.id || 0);
+            let rawLabel = supplierDisplayLabel(supplier);
+
+            if (searchText !== '' && rawLabel.toLowerCase().indexOf(searchText) === -1 && supplierId !== selectedId) {
+                return;
+            }
+
+            if (shown >= 30 && supplierId !== selectedId) {
+                return;
+            }
+
+            html += '<button type="button" class="list-group-item list-group-item-action supplier-search-option" data-id="' + supplierId + '">' +
+                '<div class="fw-semibold">' + escapeHtml(supplier.supplier_name || 'Supplier') + '</div>' +
+                '<small class="text-muted">' + escapeHtml(supplier.mobile || '') + '</small>' +
+                '</button>';
+            shown++;
+        });
+
+        if (html === '') {
+            html = '<div class="list-group-item text-muted">No supplier found.</div>';
+        }
+
+        $('#supplierDropdown').html(html);
+
+        if (forceShow === true) {
+            $('#supplierDropdown').removeClass('d-none');
+        } else {
+            $('#supplierDropdown').addClass('d-none');
+        }
+    }
+
+    function selectSupplierForPayment(supplierId, resetAmount) {
+        supplierId = parseInt(supplierId || 0);
+
+        if (supplierId <= 0) {
+            $('#supplier_id').val('');
+            $('#supplierSearchInput').val('');
+            $('#supplierDropdown').addClass('d-none');
+            isEditMode = false;
+            applyPageContext();
+            loadSupplierData(function () {
+                applyPaymentTypeRules(true);
+            });
+            return;
+        }
+
+        $('#supplier_id').val(supplierId);
+        setSupplierInputText(findSupplierById(supplierId));
+        $('#supplierDropdown').addClass('d-none');
+        isEditMode = false;
+        applyPageContext();
+        loadSupplierData(function () {
+            applyPaymentTypeRules(resetAmount === true);
         });
     }
 
@@ -277,7 +398,7 @@ $(document).ready(function () {
         if (supplierId <= 0) {
             supplierSummary = {};
             pendingPurchases = [];
-            renderSummary({});
+            renderSummary(supplierOverallSummary);
             renderPurchaseBills();
             loadPayments();
             if (typeof callback === 'function') callback();
@@ -300,7 +421,7 @@ $(document).ready(function () {
     function loadSummary(callback) {
         let supplierId = parseInt($('#supplier_id').val() || 0);
         if (supplierId <= 0) {
-            renderSummary({});
+            renderSummary(supplierOverallSummary);
             if (typeof callback === 'function') callback();
             return;
         }
@@ -608,6 +729,7 @@ $(document).ready(function () {
 
                     $('#payment_id').val(payment.id || 0);
                     $('#supplier_id').val(payment.supplier_id);
+                    setSupplierInputText(findSupplierById(payment.supplier_id));
                     $('#payment_date').val(payment.payment_date);
                     $('#payment_type').val(payment.payment_type);
                     $('#total_amount').val(parseFloat(payment.total_amount || 0).toFixed(2));
@@ -819,7 +941,7 @@ $(document).ready(function () {
         let paymentType = parseInt($('#payment_type').val() || 1);
 
         if (supplierId <= 0) {
-            return warn('Please select supplier.', '#supplier_id');
+            return warn('Please select supplier.', '#supplierSearchInput');
         }
 
         if ($('#payment_date').val() === '') {
@@ -881,9 +1003,11 @@ $(document).ready(function () {
 
         if (clearSupplier === true) {
             $('#supplier_id').val('');
+            $('#supplierSearchInput').val('');
+            $('#supplierDropdown').addClass('d-none');
             supplierSummary = {};
             pendingPurchases = [];
-            renderSummary({});
+            renderSummary(supplierOverallSummary);
             renderPurchaseBills();
         }
 
@@ -942,3 +1066,4 @@ $(document).ready(function () {
         return $('<div>').text(value === null || value === undefined ? '' : value).html();
     }
 });
+    

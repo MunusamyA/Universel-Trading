@@ -101,7 +101,7 @@ $page_title = 'Supplier Payments | Universal ERP';
                         <div class="card text-center">
                             <div class="card-body text-muted">
                                 <h3 class="text-success" id="totalPayable">0.00</h3>
-                                Total Payable
+                                Total Pending Amount
                             </div>
                         </div>
                     </div>
@@ -120,11 +120,19 @@ $page_title = 'Supplier Payments | Universal ERP';
 
                         <div class="card-body">
                             <div class="row">
-                                <div class="col-md-4 mb-3">
+                                <div class="col-md-4 mb-3" id="supplierSearchBox">
                                     <label class="form-label">Supplier *</label>
-                                    <select class="form-select" id="supplier_id" name="supplier_id">
-                                        <option value="">Select Supplier</option>
-                                    </select>
+                                    <input type="hidden" id="supplier_id" name="supplier_id" value="<?= (int)$supplierId; ?>">
+                                    <div class="position-relative">
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" id="supplierSearchInput" placeholder="Search supplier name / mobile" autocomplete="off">
+                                            <button type="button" class="btn btn-light border" id="clearSupplierSearchBtn" title="Clear supplier">
+                                                <i class="mdi mdi-close"></i>
+                                            </button>
+                                        </div>
+                                        <div class="list-group position-absolute w-100 shadow-sm d-none" id="supplierDropdown" style="z-index: 1050; max-height: 230px; overflow-y: auto;"></div>
+                                    </div>
+                                    <small class="text-muted" id="supplierSearchHelp">Type supplier name / mobile and select from list.</small>
                                 </div>
 
                                 <div class="col-md-2 mb-3">
