@@ -537,13 +537,13 @@ $(document).ready(function () {
                 if (isEditMode && editOriginalPaymentType === 1) {
                     maxAmount = round2(maxAmount + editOriginalPaymentAmount);
                 }
-                help = 'Overall: FIFO purchase bill due first, opening outstanding last.';
+                help = '';
                 limitHelp = `Total payable up to: ₹${numberFormat(maxAmount)} | Purchase due: ₹${numberFormat(supplierSummary.purchase_due || 0)} | Opening due: ₹${numberFormat(supplierSummary.opening_due || 0)}. You can enter partial amount.`;
                 allowSubmit = maxAmount > 0;
             }
         }
 
-        $('#paymentTypeHelp').text(help || 'Select payment type.');
+        $('#paymentTypeHelp').text(help || '');
         $('#amountLimitHelp').text(supplierId > 0 ? limitHelp : 'Select supplier first.');
         $('#total_amount')
             .prop('readonly', false)
@@ -1066,4 +1066,3 @@ $(document).ready(function () {
         return $('<div>').text(value === null || value === undefined ? '' : value).html();
     }
 });
-    

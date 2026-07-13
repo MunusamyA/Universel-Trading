@@ -47,9 +47,6 @@ $currentDocumentType = 3;
                             </div>
 
                             <div class="d-flex flex-wrap gap-2">
-                                <a href="<?= BASE_URL; ?>pages/sales.php" class="btn btn-primary d-none" id="newSalesEntryBtn">
-                                    <i class="mdi mdi-plus me-1"></i> New Sales Entry
-                                </a>
 
                                 <a href="<?= BASE_URL; ?>pages/quotation-list.php" class="btn btn-outline-primary d-none sales-doc-nav" id="quotationListBtn" data-doc-type="1">
                                     <i class="mdi mdi-file-edit-outline me-1"></i> Quotation

@@ -132,7 +132,7 @@ $page_title = 'Supplier Payments | Universal ERP';
                                         </div>
                                         <div class="list-group position-absolute w-100 shadow-sm d-none" id="supplierDropdown" style="z-index: 1050; max-height: 230px; overflow-y: auto;"></div>
                                     </div>
-                                    <small class="text-muted" id="supplierSearchHelp">Type supplier name / mobile and select from list.</small>
+                                    
                                 </div>
 
                                 <div class="col-md-2 mb-3">
