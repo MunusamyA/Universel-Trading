@@ -3,10 +3,8 @@ require_once __DIR__ . '/../includes/config.php';
 require_once BASE_PATH . 'includes/db.php';
 require_once BASE_PATH . 'includes/security.php';
 require_once BASE_PATH . 'includes/auth.php';
-
 secureSessionStart();
 requireLogin();
-
 $page_title = 'Zone Master | Universal ERP';
 ?>
 <!doctype html>
