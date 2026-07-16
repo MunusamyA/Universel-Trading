@@ -44,8 +44,8 @@ $page_title = ($productId > 0 ? 'Edit Product' : 'Add Product') . ' | Universal 
                             </div>
                             <div class="card-body">
                                 <div class="row">
-                                    <div class="col-md-4 "><label class="form-label">Product Code</label><input type="text" class="form-control text-uppercase" id="product_code" name="product_code" placeholder="Auto generated if empty"></div>
                                     <div class="col-md-8 "><label class="form-label">Product Name <span class="text-danger">*</span></label><input type="text" class="form-control" id="product_name" name="product_name" placeholder="Enter product name"></div>
+                                    <div class="col-md-4 "><label class="form-label">Product Code</label><input type="text" class="form-control text-uppercase" id="product_code" name="product_code" placeholder="Auto generated if empty"></div>
                                     <div class="col-md-4 mt-3"><label class="form-label">Category <span class="text-danger">*</span></label>
                                         <div class="input-group"><select class="form-select" id="category_id" name="category_id">
                                                 <option value="">Select Category</option>
