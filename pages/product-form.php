@@ -44,19 +44,19 @@ $page_title = ($productId > 0 ? 'Edit Product' : 'Add Product') . ' | Universal 
                             </div>
                             <div class="card-body">
                                 <div class="row">
-                                    <div class="col-md-4 mt-3"><label class="form-label">Product Code</label><input type="text" class="form-control text-uppercase" id="product_code" name="product_code" placeholder="Auto generated if empty"></div>
-                                    <div class="col-md-8 mt-3"><label class="form-label">Product Name <span class="text-danger">*</span></label><input type="text" class="form-control" id="product_name" name="product_name" placeholder="Enter product name"></div>
-                                    <div class="col-md-4"><label class="form-label">Category <span class="text-danger">*</span></label>
+                                    <div class="col-md-4 "><label class="form-label">Product Code</label><input type="text" class="form-control text-uppercase" id="product_code" name="product_code" placeholder="Auto generated if empty"></div>
+                                    <div class="col-md-8 "><label class="form-label">Product Name <span class="text-danger">*</span></label><input type="text" class="form-control" id="product_name" name="product_name" placeholder="Enter product name"></div>
+                                    <div class="col-md-4 mt-3"><label class="form-label">Category <span class="text-danger">*</span></label>
                                         <div class="input-group"><select class="form-select" id="category_id" name="category_id">
                                                 <option value="">Select Category</option>
                                             </select><button class="btn btn-outline-primary quick-master-btn" type="button" data-master="category"><i class="mdi mdi-plus"></i></button></div>
                                     </div>
-                                    <div class="col-md-4"><label class="form-label">Sub Category</label>
+                                    <div class="col-md-4 mt-3"><label class="form-label">Sub Category</label>
                                         <div class="input-group"><select class="form-select" id="sub_category_id" name="sub_category_id">
                                                 <option value="">Select Sub Category (Optional)</option>
                                             </select><button class="btn btn-outline-primary quick-master-btn" type="button" data-master="sub_category"><i class="mdi mdi-plus"></i></button></div>
                                     </div>
-                                    <div class="col-md-4"><label class="form-label">HSN</label>
+                                    <div class="col-md-4 mt-3"><label class="form-label">HSN</label>
                                         <div class="input-group"><select class="form-select price-calc" id="hsn_id" name="hsn_id">
                                                 <option value="">Select HSN (Optional)</option>
                                             </select><button class="btn btn-outline-primary quick-master-btn" type="button" data-master="hsn"><i class="mdi mdi-plus"></i></button></div><small class="text-muted" id="gstAmountText">GST amount: ₹0.00</small>
